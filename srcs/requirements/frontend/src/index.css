@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-50: #fdf2f3;
+  --color-brand-100: #fbe3e6;
+  --color-brand-500: #e11d48;
+  --color-brand-600: #c8102e;
+  --color-brand-700: #a50d26;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+body {
+  @apply bg-slate-200 text-slate-900 antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.leaflet-container {
+  font-family: inherit;
+}
+
+/* Keep Leaflet's top controls (attribution) below the floating top bar. */
+.leaflet-top {
+  top: calc(env(safe-area-inset-top) + 4.5rem);
+}
+.leaflet-control-attribution {
+  border-radius: 6px 0 0 6px;
+  font-size: 10px;
+}
+
+/* Numbered stop markers */
+.stop-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  border: 2px solid white;
+  color: white;
+  font-weight: 700;
+  font-size: 12px;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
+}
+.stop-marker.current {
+  font-size: 14px;
+  outline: 3px solid rgb(200 16 46 / 0.35);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+@keyframes pulse {
+  50% {
+    outline-width: 8px;
+  }
+}
+
+@keyframes slide-in {
+  from {
+    transform: translateX(-100%);
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}

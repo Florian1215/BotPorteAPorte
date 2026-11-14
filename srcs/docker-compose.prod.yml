@@ -1,0 +1,79 @@
+name: canvassing
+
+services:
+  db:
+    build: requirements/postgres
+    image: canvassing-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks: [backend]
+
+  backend:
+    build:
+      context: requirements/backend
+      target: prod
+    image: canvassing-backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DJANGO_DEBUG: "0"
+      DATABASE_HOST: db
+    volumes:
+      - backend_static:/app/staticfiles
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [backend, frontend]
+
+  # Builds the React app, copies it into a volume served by nginx, then exits.
+  frontend:
+    build:
+      context: requirements/frontend
+      target: prod
+    image: canvassing-frontend
+    restart: "no"
+    volumes:
+      - frontend_dist:/dist
+
+  nginx:
+    build:
+      context: requirements/nginx
+      args:
+        NGINX_CONF: prod.conf
+    image: canvassing-nginx
+    restart: unless-stopped
+    environment:
+      SERVER_NAME: ${SERVER_NAME:-localhost}
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    volumes:
+      - frontend_dist:/usr/share/nginx/html:ro
+      - backend_static:/var/www/django-static:ro
+      - certs:/etc/nginx/ssl
+    depends_on:
+      backend:
+        condition: service_started
+      frontend:
+        condition: service_completed_successfully
+    networks: [frontend]
+
+volumes:
+  db_data:
+  backend_static:
+  frontend_dist:
+  certs:
+
+networks:
+  backend:
+  frontend:

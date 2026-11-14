@@ -1,0 +1,66 @@
+name: canvassing-dev
+
+services:
+  db:
+    build: requirements/postgres
+    image: canvassing-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${DB_DEV_PORT:-5433}:5432"
+    volumes:
+      - db_data_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  backend:
+    build:
+      context: requirements/backend
+      target: dev
+    image: canvassing-backend-dev
+    env_file: .env
+    environment:
+      DJANGO_DEBUG: "1"
+      DATABASE_HOST: db
+    volumes:
+      - ./requirements/backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: requirements/frontend
+      target: dev
+    image: canvassing-frontend-dev
+    volumes:
+      - ./requirements/frontend:/app
+      - /app/node_modules
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
+
+  nginx:
+    build:
+      context: requirements/nginx
+      args:
+        NGINX_CONF: dev.conf
+    image: canvassing-nginx-dev
+    environment:
+      SERVER_NAME: ${SERVER_NAME:-localhost}
+    ports:
+      - "8080:80"
+      - "8443:443"
+    volumes:
+      - certs_dev:/etc/nginx/ssl
+    depends_on:
+      - backend
+      - frontend
+
+volumes:
+  db_data_dev:
+  certs_dev:

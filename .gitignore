@@ -1,0 +1,10 @@
+srcs/.env
+**/node_modules/
+**/dist/
+**/__pycache__/
+srcs/requirements/backend/staticfiles/
+*.xlsx
+*.xls
+*.tsbuildinfo
+canvassing-bot
+.idea

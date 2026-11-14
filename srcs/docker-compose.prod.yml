@@ -1,3 +1,6 @@
+# PRODUCTION: gunicorn + Vite build (React), behind nginx.
+#   Whole site on a single URL: http://<server>:${HTTP_PORT:-8080}
+#     /api/, /admin/ → Django (gunicorn)    · everything else → frontend (React build)
 name: canvassing
 
 services:
@@ -35,44 +38,33 @@ services:
         condition: service_healthy
     networks: [backend, frontend]
 
-  # Builds the React app, copies it into a volume served by nginx, then exits.
   frontend:
     build:
       context: requirements/frontend
       target: prod
     image: canvassing-frontend
-    restart: "no"
-    volumes:
-      - frontend_dist:/dist
+    restart: unless-stopped
+    networks: [frontend]
 
+  # Only exposed service: dispatches requests between Django and the frontend
   nginx:
     build:
       context: requirements/nginx
-      args:
-        NGINX_CONF: prod.conf
+      target: prod
     image: canvassing-nginx
     restart: unless-stopped
-    environment:
-      SERVER_NAME: ${SERVER_NAME:-localhost}
     ports:
-      - "${NGINX_HTTP_PORT:-80}:80"
-      - "${NGINX_HTTPS_PORT:-443}:443"
+      - "${HTTP_PORT:-8080}:80"
     volumes:
-      - frontend_dist:/usr/share/nginx/html:ro
-      - backend_static:/var/www/django-static:ro
-      - certs:/etc/nginx/ssl
+      - backend_static:/srv/django-static:ro
     depends_on:
-      backend:
-        condition: service_started
-      frontend:
-        condition: service_completed_successfully
+      - backend
+      - frontend
     networks: [frontend]
 
 volumes:
   db_data:
   backend_static:
-  frontend_dist:
-  certs:
 
 networks:
   backend:

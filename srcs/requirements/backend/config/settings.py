@@ -106,11 +106,12 @@ REST_FRAMEWORK = {
     "UNAUTHENTICATED_USER": "django.contrib.auth.models.AnonymousUser",
 }
 
-# Behind nginx (TLS terminated there)
+# Behind nginx
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 USE_X_FORWARDED_HOST = True
-SESSION_COOKIE_SECURE = not DEBUG
-CSRF_COOKIE_SECURE = not DEBUG
+# Plain HTTP by default (nginx listens on HTTP_PORT); enable when HTTPS is terminated in front.
+SESSION_COOKIE_SECURE = env_bool("DJANGO_SECURE_COOKIES", False)
+CSRF_COOKIE_SECURE = SESSION_COOKIE_SECURE
 SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_AGE = 60 * 60 * 24 * 30  # 30 days: militants stay logged in on their phone

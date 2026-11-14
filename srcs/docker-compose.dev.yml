@@ -1,3 +1,7 @@
+# DEVELOPMENT: hot reload of the frontend and the backend.
+#   Whole site on a single URL: http://localhost:${HTTP_PORT:-8080}
+#     /api/, /admin/ → Django (runserver)   · everything else → Vite (React)
+#   Ports can be changed in srcs/.env (HTTP_PORT, DB_DEV_PORT)
 name: canvassing-dev
 
 services:
@@ -44,23 +48,17 @@ services:
     environment:
       CHOKIDAR_USEPOLLING: "true"
 
+  # Only exposed service: dispatches requests between Django and the frontend
   nginx:
     build:
       context: requirements/nginx
-      args:
-        NGINX_CONF: dev.conf
+      target: dev
     image: canvassing-nginx-dev
-    environment:
-      SERVER_NAME: ${SERVER_NAME:-localhost}
     ports:
-      - "8080:80"
-      - "8443:443"
-    volumes:
-      - certs_dev:/etc/nginx/ssl
+      - "${HTTP_PORT:-8080}:80"
     depends_on:
       - backend
       - frontend
 
 volumes:
   db_data_dev:
-  certs_dev:

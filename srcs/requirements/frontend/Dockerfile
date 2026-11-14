@@ -13,7 +13,9 @@ FROM base AS build
 COPY . .
 RUN npm run build
 
-# --- Production: copy the build into the volume served by nginx, then exit ---
-FROM alpine:3.20 AS prod
-COPY --from=build /app/dist /app/dist
-CMD ["sh", "-c", "rm -rf /dist/* && cp -r /app/dist/. /dist/ && echo 'Frontend build copied.'"]
+# --- Production: static server for the build (behind the nginx service) ---
+FROM nginx:1.27-alpine AS prod
+RUN rm /etc/nginx/conf.d/default.conf
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
+EXPOSE 80

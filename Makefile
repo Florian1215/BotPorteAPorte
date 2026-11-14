@@ -2,14 +2,14 @@
 NAME		:=	canvassing
 SRCS_D		:=	srcs
 ENV_FILE	:=	$(SRCS_D)/.env
-MODE		?=	prod
+MODE		?=	dev
 COMPOSE_F	?=	$(SRCS_D)/docker-compose.$(MODE).yml
 SERVICE		?=	#Leave blank
 TAIL		?=	100
 
 ######################################################## FLAGS #########################################################
 FLAGS		=	-f $(COMPOSE_F)
-COMPOSE		=	docker-compose
+COMPOSE		=	docker compose
 DSHELL		=	/bin/sh
 MANAGE		=	$(COMPOSE) $(FLAGS) exec backend python manage.py
 
@@ -22,7 +22,7 @@ all			:	$(NAME)
 $(NAME)		:	$(ENV_FILE)
 			$(COMPOSE) $(FLAGS) up --build $(SERVICE)
 
-# Development mode: hot reload (Vite + Django runserver) on http://localhost:8080 and https://localhost:8443
+# Development mode: hot reload (Vite + Django runserver) on http://localhost:$(HTTP_PORT) (HTTP_PORT in srcs/.env)
 .PHONY: dev
 dev			:	$(ENV_FILE)
 			$(MAKE) all MODE=dev

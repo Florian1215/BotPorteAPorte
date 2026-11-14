@@ -9,7 +9,7 @@ TAIL		?=	100
 
 ######################################################## FLAGS #########################################################
 FLAGS		=	-f $(COMPOSE_F)
-COMPOSE		=	docker compose
+COMPOSE		=	docker-compose
 DSHELL		=	/bin/sh
 MANAGE		=	$(COMPOSE) $(FLAGS) exec backend python manage.py
 

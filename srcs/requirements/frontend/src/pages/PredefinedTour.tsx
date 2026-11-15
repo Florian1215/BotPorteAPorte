@@ -89,12 +89,11 @@ export default function PredefinedTour() {
       </MapLayers>
 
       {!selected ? (
-        <Sheet title="Tournée préparée" subtitle="Les bureaux de vote les plus intéressants : choisis-en un.">
+        <Sheet title="Tournée préparée">
           {!areas && !error && <Loading />}
           {error && <Alert>{error}</Alert>}
           {areas?.length === 0 && (
             <EmptyState icon={MapPinned} title="Aucune zone préparée">
-              Ton groupe d'action n'a pas encore importé ses zones, ou toutes leurs adresses ont été visitées.
             </EmptyState>
           )}
           <div className="space-y-2">

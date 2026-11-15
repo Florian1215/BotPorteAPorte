@@ -60,24 +60,20 @@ function groupColor(group: Group, isCurrent: boolean): string {
   return results.size === 1 ? RESULT_BY_VALUE[group.stops[0].result!].color : "#71717a";
 }
 
-/** "Promesse de vote le 12 mai 2026 pour l'élection consulaire 2026", "Didier R. est déjà passé·e le … et a boîté un tract". */
+/** "Adresse visitée le 16 mai 2026 · Absente (tract boîté)", full width above the feedback buttons. */
 function LastVisit({ visit }: { visit: NonNullable<Stop["last_visit"]> }) {
   const date = new Date(visit.at).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
-  const election = visit.election && !visit.current_election ? ` ${visit.election}` : "";
-  if (visit.result === "address_to_retry")
-    return (
-      <span className="mt-1 block text-xs text-amber-700">
-        {visit.by ?? "Quelqu'un"} est déjà passé·e le {date}
-        {election} et {visit.detail ? ABSENT_DETAIL_BY_VALUE[visit.detail].past : "la personne était absente"}
-      </span>
-    );
+  const detail = visit.result === "address_to_retry" && visit.detail ? ` (${ABSENT_DETAIL_BY_VALUE[visit.detail].label.toLowerCase()})` : "";
+  const election = visit.election && !visit.current_election ? ` · ${visit.election.replace(/^pour (l'élection |l'|« )?/, "").replace(/ »$/, "")}` : "";
   const success = visit.result === "commitment_to_vote" || visit.result === "good_conversation";
+  const tone =
+    visit.result === "address_to_retry" ? "bg-amber-50 text-amber-800" : success ? "bg-emerald-50 text-emerald-800" : "bg-zinc-100 text-zinc-600";
   return (
-    <span className={`mt-1 block text-xs ${success ? "text-emerald-700" : "text-zinc-500"}`}>
-      {RESULT_BY_VALUE[visit.result].label} le {date}
-      {visit.election ? ` ${visit.election}` : ""}
-      {visit.by ? ` (${visit.by})` : ""}
-    </span>
+    <p className={`rounded-xl px-3 py-2 text-[13px] leading-snug ${tone}`}>
+      Adresse visitée le {date} · <span className="font-semibold">{RESULT_BY_VALUE[visit.result].short}</span>
+      {detail}
+      {election}
+    </p>
   );
 }
 
@@ -383,7 +379,6 @@ function TourControls({ tour, setTour }: { tour: Tour; setTour: (t: Tour) => voi
             <span className="block text-xs text-zinc-400">
               {current.address.zip_code} {current.address.city}
             </span>
-            {current.last_visit && <LastVisit visit={current.last_visit} />}
           </span>
         }
         action={
@@ -440,6 +435,7 @@ function TourControls({ tour, setTour }: { tour: Tour; setTour: (t: Tour) => voi
             </div>
           )}
 
+          {current.last_visit && <LastVisit visit={current.last_visit} />}
           {error && <Alert>{error}</Alert>}
           <ResultButtons
             busy={busy}

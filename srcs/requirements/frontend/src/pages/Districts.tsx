@@ -609,7 +609,6 @@ function ImportSheet({
   return (
     <Sheet
       title="Importer les bureaux de vote"
-      subtitle="La carte officielle des bureaux de vote et les résultats de la dernière élection."
       locate={false}
       action={
         onCancel && (
@@ -624,7 +623,6 @@ function ImportSheet({
       {replaceWarning}
       {data.districts.length === 0 && !job && (
         <EmptyState icon={LandPlot} title="Pas encore de zones">
-          Les zones sont les bureaux de vote officiels, avec un score calculé à partir du vote Die Linke, de l'abstention, de l'âge, de la densité et des loyers.
         </EmptyState>
       )}
 

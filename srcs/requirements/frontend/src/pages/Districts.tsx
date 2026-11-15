@@ -261,7 +261,6 @@ function OverviewSheet({
   onPanel: (p: "weights" | "import") => void;
 }) {
   const best = data.districts.slice(0, 3); // already sorted by score
-  const started = data.districts.filter((d) => d.done_pct > 0).length;
   return (
     <Sheet
       title={`Zones (${data.districts.length.toLocaleString("fr")})`}

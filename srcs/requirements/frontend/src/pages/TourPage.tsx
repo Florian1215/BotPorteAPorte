@@ -1,4 +1,4 @@
-import { ArrowRight, CircleStop, Clock, Flag, Footprints, House, Navigation, PartyPopper, Plus, Route as RouteIcon, Undo2, X } from "lucide-react";
+import { ArrowRight, CircleStop, Clock, Flag, Footprints, House, Mail, MailX, Navigation, PartyPopper, Plus, Route as RouteIcon, Undo2, X, type LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Marker, Polyline } from "react-leaflet";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -60,19 +60,32 @@ function groupColor(group: Group, isCurrent: boolean): string {
   return results.size === 1 ? RESULT_BY_VALUE[group.stops[0].result!].color : "#71717a";
 }
 
-/** "Adresse visitée le 16 mai 2026 · Absente (tract boîté)", full width above the feedback buttons. */
+const ABSENT_DETAIL_ICONS: Record<AbsentDetail, LucideIcon> = { leaflet: Mail, mailbox_inaccessible: MailX };
+
+/**
+ * "Adresse visitée · Consulaire 2026" + the feedback as a small colored icon (same color and icon as its button).
+ * The full wording (result, date) is in the tooltip / for screen readers.
+ */
 function LastVisit({ visit }: { visit: NonNullable<Stop["last_visit"]> }) {
+  const result = RESULT_BY_VALUE[visit.result];
   const date = new Date(visit.at).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
-  const detail = visit.result === "address_to_retry" && visit.detail ? ` (${ABSENT_DETAIL_BY_VALUE[visit.detail].label.toLowerCase()})` : "";
-  const election = visit.election && !visit.current_election ? ` · ${visit.election.replace(/^pour (l'élection |l'|« )?/, "").replace(/ »$/, "")}` : "";
-  const success = visit.result === "commitment_to_vote" || visit.result === "good_conversation";
-  const tone =
-    visit.result === "address_to_retry" ? "bg-amber-50 text-amber-800" : success ? "bg-emerald-50 text-emerald-800" : "bg-zinc-100 text-zinc-600";
+  const detail = visit.result === "address_to_retry" && visit.detail ? ABSENT_DETAIL_BY_VALUE[visit.detail] : null;
+  const election = (visit.election ?? "").replace(/^pour (l'élection |l'|« )?/, "").replace(/ »$/, "");
+  const full = `${result.label}${detail ? ` (${detail.label.toLowerCase()})` : ""} le ${date}${visit.election ? ` ${visit.election}` : ""}`;
+  const DetailIcon = detail ? ABSENT_DETAIL_ICONS[detail.value] : null;
   return (
-    <p className={`rounded-xl px-3 py-2 text-[13px] leading-snug ${tone}`}>
-      Adresse visitée le {date} · <span className="font-semibold">{RESULT_BY_VALUE[visit.result].short}</span>
-      {detail}
-      {election}
+    <p className="flex items-center gap-2 rounded-xl bg-zinc-100 px-3 py-1.5 text-[13px] text-zinc-600" title={full} aria-label={`Adresse visitée : ${full}`}>
+      <span className="min-w-0 flex-1 truncate">
+        Adresse visitée{election && <> · <span className="font-semibold text-zinc-800">{election[0].toUpperCase() + election.slice(1)}</span></>}
+      </span>
+      <span className={`flex size-6 shrink-0 items-center justify-center rounded-full text-white ${result.disc}`}>
+        <result.icon className="size-3.5" strokeWidth={2.5} />
+      </span>
+      {DetailIcon && (
+        <span className="-ml-1 flex size-6 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+          <DetailIcon className="size-3.5" strokeWidth={2.5} />
+        </span>
+      )}
     </p>
   );
 }
@@ -363,7 +376,7 @@ function TourControls({ tour, setTour }: { tour: Tour; setTour: (t: Tour) => voi
       <Sheet
         title={
           // 1. who (the name on the doorbell)
-          <span key={stepKey} className="block animate-[step-in_.35s_cubic-bezier(.2,.8,.2,1)] text-[1.6rem] leading-tight font-bold tracking-[-0.025em]">
+          <span key={stepKey} className="block animate-[step-in_.35s_cubic-bezier(.2,.8,.2,1)] text-[1.6rem] short:text-[1.35rem] leading-tight font-bold tracking-[-0.025em]">
             {personName(current)}
             {current.address.birth_year && (
               <span className="ml-2 align-middle text-base font-medium tracking-normal text-zinc-400">
@@ -375,7 +388,7 @@ function TourControls({ tour, setTour }: { tour: Tour; setTour: (t: Tour) => voi
         subtitle={
           <span key={stepKey} className="block animate-[step-in_.35s_cubic-bezier(.2,.8,.2,1)]">
             {/* 2. street and number, 3. the rest of the address in small */}
-            <span className="mt-0.5 block text-lg leading-snug font-semibold text-zinc-800">{current.address.address}</span>
+            <span className="mt-0.5 block text-lg short:text-base leading-snug font-semibold text-zinc-800">{current.address.address}</span>
             <span className="block text-xs text-zinc-400">
               {current.address.zip_code} {current.address.city}
             </span>

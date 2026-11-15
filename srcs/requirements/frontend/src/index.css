@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Short screens (small phones, or Safari with its toolbars): a more compact UI, less vertical padding. */
+@custom-variant short (@media (max-height: 720px));
+@custom-variant tiny (@media (max-height: 600px));
+
 @theme {
   --color-brand-50: #fff1f2;
   --color-brand-100: #ffe1e4;

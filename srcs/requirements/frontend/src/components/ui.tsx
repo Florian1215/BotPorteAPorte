@@ -24,7 +24,7 @@ const VARIANTS: Record<Variant, string> = {
 };
 
 const SIZES: Record<Size, string> = {
-  md: "min-h-12 rounded-2xl px-4 text-[15px] gap-2",
+  md: "min-h-12 short:min-h-11 tiny:min-h-10 rounded-2xl px-4 text-[15px] gap-2",
   sm: "min-h-9 rounded-xl px-3 text-sm gap-1.5",
 };
 
@@ -400,18 +400,18 @@ export function Sheet({
             {above}
           </div>
         )}
-        <div ref={panel} className="flex max-h-[82dvh] flex-col rounded-t-[30px] bg-white/[0.97] shadow-sheet ring-1 ring-zinc-950/5 backdrop-blur-2xl sm:rounded-[30px]">
+        <div ref={panel} className="flex max-h-[82dvh] short:max-h-[88dvh] flex-col rounded-t-[30px] bg-white/[0.97] shadow-sheet ring-1 ring-zinc-950/5 backdrop-blur-2xl sm:rounded-[30px]">
           <div ref={header} {...dragHandlers} className="shrink-0 touch-none select-none">
             <button
               type="button"
               onClick={() => setCollapsed((c) => !c)}
               aria-label={collapsed ? "Déplier le panneau" : "Replier le panneau"}
-              className="flex w-full justify-center pt-2.5 pb-2"
+              className="flex w-full justify-center pt-2.5 pb-2 short:pt-1.5 short:pb-1.5"
             >
               <span className="h-[5px] w-9 rounded-full bg-zinc-300" />
             </button>
             {(title || action) && (
-              <div className="flex items-start gap-3 px-5 pb-3">
+              <div className="flex items-start gap-3 px-5 pb-3 short:pb-2">
                 {showBack && (
                   <button
                     type="button"
@@ -423,8 +423,8 @@ export function Sheet({
                   </button>
                 )}
                 <div className="min-w-0 flex-1" onClick={() => collapsed && setCollapsed(false)}>
-                  {title && <h1 className="text-xl leading-tight font-semibold tracking-[-0.02em] text-zinc-950">{title}</h1>}
-                  {subtitle && <div className="mt-1 text-sm leading-snug text-zinc-500">{subtitle}</div>}
+                  {title && <h1 className="text-xl short:text-lg leading-tight font-semibold tracking-[-0.02em] text-zinc-950">{title}</h1>}
+                  {subtitle && <div className="mt-1 short:mt-0.5 text-sm leading-snug text-zinc-500">{subtitle}</div>}
                 </div>
                 {action && <div className="shrink-0">{action}</div>}
               </div>
@@ -435,12 +435,12 @@ export function Sheet({
               className="min-h-0 shrink overflow-y-auto overscroll-contain transition-[height] duration-300 ease-[cubic-bezier(.2,.8,.2,1)]"
               style={contentHeight === null ? undefined : { height: contentHeight }}
             >
-              <div ref={content} className="space-y-3 px-5 pt-0.5 pb-4">
+              <div ref={content} className="space-y-3 px-5 pt-0.5 pb-4 short:space-y-2 short:pb-3">
                 {children}
               </div>
             </div>
           )}
-          {footer && <div className="shrink-0 border-t border-zinc-950/5 px-5 pt-3 pb-3">{footer}</div>}
+          {footer && <div className="shrink-0 border-t border-zinc-950/5 px-5 py-3 short:py-2">{footer}</div>}
           <div className="h-[env(safe-area-inset-bottom)] shrink-0" />
         </div>
       </div>
@@ -472,14 +472,14 @@ export function ResultButtons({
 }) {
   const [split, setSplit] = useState(false);
   return (
-    <div className="grid grid-cols-2 gap-2">
+    <div className="grid grid-cols-2 gap-2 short:gap-1.5">
       {RESULTS.map((r, i) => {
         const last = i === RESULTS.length - 1;
         const isSelected = selected === r.value;
         const dimmed = selected !== null && !isSelected;
         if (r.value === "address_to_retry" && (split || isSelected))
           return (
-            <div key={r.value} className="grid min-h-[4.5rem] grid-rows-2 gap-1.5">
+            <div key={r.value} className="grid min-h-[4.5rem] short:min-h-14 tiny:min-h-12 grid-rows-2 gap-1.5 short:gap-1">
               {ABSENT_DETAILS.map((d) => {
                 const on = isSelected && selectedDetail === d.value;
                 const busyHere = busy === `${r.value}:${d.value}` || (on && busy === "clear");
@@ -514,16 +514,16 @@ export function ResultButtons({
               isSelected && onClear ? onClear() : r.value === "address_to_retry" ? setSplit(true) : (setSplit(false), onPick(r.value))
             }
             aria-pressed={isSelected}
-            className={`flex min-h-[4.5rem] items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-[13px] leading-tight font-semibold transition active:scale-[0.98] disabled:cursor-not-allowed ${
+            className={`flex min-h-[4.5rem] short:min-h-14 tiny:min-h-12 items-center gap-2.5 rounded-2xl px-3 py-2.5 short:py-1.5 text-left text-[13px] leading-tight font-semibold transition active:scale-[0.98] disabled:cursor-not-allowed ${
               isSelected
                 ? `${r.solid} ring-2`
                 : dimmed
                   ? "bg-zinc-50 text-zinc-400 ring-1 ring-zinc-950/5"
                   : "bg-white text-zinc-800 ring-1 ring-zinc-950/10 active:bg-zinc-50"
-            } ${disabled && !isSelected ? "opacity-50" : ""} ${last ? "col-span-2 min-h-14" : ""}`}
+            } ${disabled && !isSelected ? "opacity-50" : ""} ${last ? "col-span-2 min-h-14 short:min-h-11 tiny:min-h-10" : ""}`}
           >
             <span
-              className={`flex size-9 shrink-0 items-center justify-center rounded-full ${
+              className={`flex size-9 tiny:size-7 shrink-0 items-center justify-center rounded-full ${
                 isSelected ? "bg-white/20 text-white" : dimmed ? "bg-zinc-200 text-zinc-400" : `${r.disc} text-white`
               }`}
             >

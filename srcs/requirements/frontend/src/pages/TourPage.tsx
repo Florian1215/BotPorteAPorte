@@ -62,6 +62,15 @@ function groupColor(group: Group, isCurrent: boolean): string {
 
 const ABSENT_DETAIL_ICONS: Record<AbsentDetail, LucideIcon> = { leaflet: Mail, mailbox_inaccessible: MailX };
 
+/** Light background of the "Adresse visitée" line, in the color of the feedback. */
+const LAST_VISIT_TONES: Record<ResultValue, string> = {
+  commitment_to_vote: "bg-emerald-50 text-emerald-800 ring-emerald-600/15",
+  good_conversation: "bg-teal-50 text-teal-800 ring-teal-600/15",
+  do_not_contact: "bg-zinc-100 text-zinc-700 ring-zinc-500/15",
+  address_to_retry: "bg-amber-50 text-amber-800 ring-amber-500/20",
+  address_failure: "bg-red-50 text-red-800 ring-red-600/15",
+};
+
 /**
  * "Adresse visitée · Consulaire 2026" + the feedback as a small colored icon (same color and icon as its button).
  * The full wording (result, date) is in the tooltip / for screen readers.
@@ -74,15 +83,15 @@ function LastVisit({ visit }: { visit: NonNullable<Stop["last_visit"]> }) {
   const full = `${result.label}${detail ? ` (${detail.label.toLowerCase()})` : ""} le ${date}${visit.election ? ` ${visit.election}` : ""}`;
   const DetailIcon = detail ? ABSENT_DETAIL_ICONS[detail.value] : null;
   return (
-    <p className="flex items-center gap-2 rounded-xl bg-zinc-100 px-3 py-1.5 text-[13px] text-zinc-600" title={full} aria-label={`Adresse visitée : ${full}`}>
+    <p className={`flex items-center gap-2 rounded-xl px-3 py-1.5 text-[13px] ring-1 ${LAST_VISIT_TONES[visit.result]}`} title={full} aria-label={`Adresse visitée : ${full}`}>
       <span className="min-w-0 flex-1 truncate">
-        Adresse visitée{election && <> · <span className="font-semibold text-zinc-800">{election[0].toUpperCase() + election.slice(1)}</span></>}
+        Adresse visitée{election && <> · <span className="font-semibold">{election[0].toUpperCase() + election.slice(1)}</span></>}
       </span>
       <span className={`flex size-6 shrink-0 items-center justify-center rounded-full text-white ${result.disc}`}>
         <result.icon className="size-3.5" strokeWidth={2.5} />
       </span>
       {DetailIcon && (
-        <span className="-ml-1 flex size-6 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+        <span className="-ml-1 flex size-6 shrink-0 items-center justify-center rounded-full bg-white text-amber-700 ring-1 ring-amber-500/30">
           <DetailIcon className="size-3.5" strokeWidth={2.5} />
         </span>
       )}

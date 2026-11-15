@@ -56,7 +56,7 @@ function groupStops(stops: Stop[]): Group[] {
 
 function groupColor(group: Group, isCurrent: boolean): string {
   const results = new Set(group.stops.map((s) => s.result));
-  if (results.has(null)) return isCurrent ? "#c8102e" : "#3f3f46";
+  if (results.has(null)) return isCurrent ? "#d1271c" : "#3f3f46";
   return results.size === 1 ? RESULT_BY_VALUE[group.stops[0].result!].color : "#71717a";
 }
 
@@ -111,7 +111,7 @@ function TourLayers({
     <MapLayers>
       <FitBounds points={allPoints} fitKey={`${tour.id}-${tour.status}`} />
       {tour.route && (
-        <Polyline positions={tour.route} interactive={false} pathOptions={{ color: "#c8102e", weight: 5, opacity: 0.55, lineCap: "round", lineJoin: "round" }} />
+        <Polyline positions={tour.route} interactive={false} pathOptions={{ color: "#d1271c", weight: 5, opacity: 0.55, lineCap: "round", lineJoin: "round" }} />
       )}
       <Polyline positions={stopsLine} interactive={false} pathOptions={{ color: "#18181b", weight: 2, dashArray: "2 7", lineCap: "round", opacity: 0.45 }} />
       <PinMarker point={tour.start} color="#059669" label="Départ" kind="start" />

@@ -64,7 +64,7 @@ export default function Nearby() {
               center={[center.lat, center.lon]}
               radius={radius * 1000}
               interactive={false}
-              pathOptions={{ color: "#c8102e", weight: 1.5, dashArray: "4 6", fillOpacity: 0.06 }}
+              pathOptions={{ color: "#d1271c", weight: 1.5, dashArray: "4 6", fillOpacity: 0.06 }}
             />
             <PinMarker point={center} color="#18181b" label="Centre" kind="center" />
           </>
@@ -74,7 +74,7 @@ export default function Nearby() {
             key={a.id}
             center={[a.lat, a.lon]}
             radius={6}
-            pathOptions={{ color: "white", weight: 1.5, fillColor: "#c8102e", fillOpacity: 0.9 }}
+            pathOptions={{ color: "white", weight: 1.5, fillColor: "#d1271c", fillOpacity: 0.9 }}
           >
             <Popup>{a.label}</Popup>
           </CircleMarker>

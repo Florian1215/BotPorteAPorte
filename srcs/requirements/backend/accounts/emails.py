@@ -5,7 +5,7 @@ from django.utils.html import escape
 
 from .models import Organization
 
-BRAND = "#c8102e"
+BRAND = "#d1271c"
 
 
 def site_url(request) -> str:

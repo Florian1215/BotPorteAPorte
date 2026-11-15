@@ -76,7 +76,7 @@ export default function Home() {
             center={[a.lat, a.lon]}
             radius={4.5}
             interactive={false}
-            pathOptions={{ color: "white", weight: 1.5, fillColor: "#c8102e", fillOpacity: 0.9 }}
+            pathOptions={{ color: "white", weight: 1.5, fillColor: "#d1271c", fillOpacity: 0.9 }}
           />
         ))}
       </MapLayers>

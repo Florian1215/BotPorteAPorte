@@ -294,8 +294,14 @@ export function Sheet({
   const goBack = useBack();
   const showBack = back && goBack !== null;
   const ref = useRef<HTMLDivElement>(null);
-  const touchY = useRef<number | null>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const header = useRef<HTMLDivElement>(null);
   const [collapsed, setCollapsed] = useState(false);
+  // How far the panel slides down when collapsed (everything but the header), and the live drag offset.
+  const [hideBy, setHideBy] = useState(0);
+  const [drag, setDrag] = useState<number | null>(null);
+  const gesture = useRef<{ id: number; y: number; t: number; base: number; moved: boolean; lastY: number; lastT: number } | null>(null);
+  const justDragged = useRef(false);
   const [contentHeight, setContentHeight] = useState<number | null>(null);
   const contentObserver = useRef<ResizeObserver | null>(null);
 
@@ -310,41 +316,92 @@ export function Sheet({
     contentObserver.current.observe(el);
   }, []);
 
+  const offset = drag ?? (collapsed ? hideBy : 0);
+
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const update = () => (sheetHeight.current = el.offsetHeight);
+    const update = () => {
+      const max = panel.current && header.current ? Math.max(0, panel.current.offsetHeight - header.current.offsetHeight) : 0;
+      setHideBy(max);
+      // The map keeps what is under the visible part of the sheet free (fit bounds, fly to).
+      sheetHeight.current = el.offsetHeight - (collapsed ? max : 0);
+    };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(el);
+    if (header.current) observer.observe(header.current);
     return () => {
       observer.disconnect();
       sheetHeight.current = 0;
     };
-  }, [sheetHeight]);
+  }, [sheetHeight, collapsed]);
 
-  const swipe = {
-    onTouchStart: (e: React.TouchEvent) => (touchY.current = e.touches[0].clientY),
-    onTouchEnd: (e: React.TouchEvent) => {
-      if (touchY.current === null) return;
-      const dy = e.changedTouches[0].clientY - touchY.current;
-      if (dy > 40) setCollapsed(true);
-      if (dy < -40) setCollapsed(false);
-      touchY.current = null;
+  // Drag the sheet by its header: it follows the finger, then settles open or collapsed
+  // (by position, or by a quick flick). A simple tap on the handle still toggles it.
+  const dragHandlers = {
+    onPointerDown: (e: React.PointerEvent) => {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      gesture.current = { id: e.pointerId, y: e.clientY, t: e.timeStamp, base: collapsed ? hideBy : 0, moved: false, lastY: e.clientY, lastT: e.timeStamp };
+    },
+    onPointerMove: (e: React.PointerEvent) => {
+      const g = gesture.current;
+      if (!g || g.id !== e.pointerId) return;
+      const dy = e.clientY - g.y;
+      if (!g.moved) {
+        if (Math.abs(dy) < 6) return;
+        g.moved = true; // a real drag: from now on the header follows the pointer (and its buttons are not clicked)
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      }
+      g.lastY = e.clientY;
+      g.lastT = e.timeStamp;
+      const next = g.base + dy;
+      // Rubber band beyond the open position.
+      setDrag(next < 0 ? next / 4 : Math.min(next, hideBy + 24));
+    },
+    onPointerUp: (e: React.PointerEvent) => {
+      const g = gesture.current;
+      gesture.current = null;
+      if (!g || g.id !== e.pointerId || !g.moved) return;
+      justDragged.current = true;
+      window.setTimeout(() => (justDragged.current = false), 350); // no click followed (released outside)
+      const position = g.base + (e.clientY - g.y);
+      const velocity = (e.clientY - g.lastY) / Math.max(1, e.timeStamp - g.lastT); // px/ms, > 0 downwards
+      const close = Math.abs(velocity) > 0.4 ? velocity > 0 : position > hideBy / 2;
+      setCollapsed(close);
+      setDrag(null);
+    },
+    onPointerCancel: () => {
+      gesture.current = null;
+      setDrag(null);
+    },
+    // After a drag, the click that follows the pointer release must not hit a button of the header.
+    onClickCapture: (e: React.MouseEvent) => {
+      if (justDragged.current) {
+        justDragged.current = false;
+        e.stopPropagation();
+        e.preventDefault();
+      }
     },
   };
 
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[1000] flex justify-center sm:px-4 sm:pb-4">
-      <div ref={ref} className="pointer-events-auto relative w-full max-w-md animate-[sheet-in_.25s_ease-out]">
+      <div
+        ref={ref}
+        className={`pointer-events-auto relative w-full max-w-md animate-[sheet-in_.25s_ease-out] ${
+          drag === null ? "transition-transform duration-300 ease-[cubic-bezier(.2,.8,.2,1)]" : ""
+        }`}
+        style={offset ? { transform: `translateY(${offset}px)` } : undefined}
+      >
         {(locate || above) && (
           <div className="absolute inset-x-0 bottom-full flex flex-col gap-3 px-3 pb-3 sm:px-0">
             {locate && <LocateButton className="self-end" />}
             {above}
           </div>
         )}
-        <div className="flex max-h-[82dvh] flex-col rounded-t-[30px] bg-white/[0.97] shadow-sheet ring-1 ring-zinc-950/5 backdrop-blur-2xl sm:rounded-[30px]">
-          <div {...swipe} className="shrink-0 touch-none">
+        <div ref={panel} className="flex max-h-[82dvh] flex-col rounded-t-[30px] bg-white/[0.97] shadow-sheet ring-1 ring-zinc-950/5 backdrop-blur-2xl sm:rounded-[30px]">
+          <div ref={header} {...dragHandlers} className="shrink-0 touch-none select-none">
             <button
               type="button"
               onClick={() => setCollapsed((c) => !c)}
@@ -373,7 +430,7 @@ export function Sheet({
               </div>
             )}
           </div>
-          {!collapsed && children && (
+          {children && (
             <div
               className="min-h-0 shrink overflow-y-auto overscroll-contain transition-[height] duration-300 ease-[cubic-bezier(.2,.8,.2,1)]"
               style={contentHeight === null ? undefined : { height: contentHeight }}
@@ -383,7 +440,7 @@ export function Sheet({
               </div>
             </div>
           )}
-          {!collapsed && footer && <div className="shrink-0 border-t border-zinc-950/5 px-5 pt-3 pb-3">{footer}</div>}
+          {footer && <div className="shrink-0 border-t border-zinc-950/5 px-5 pt-3 pb-3">{footer}</div>}
           <div className="h-[env(safe-area-inset-bottom)] shrink-0" />
         </div>
       </div>

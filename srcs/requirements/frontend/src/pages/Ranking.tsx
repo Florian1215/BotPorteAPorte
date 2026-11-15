@@ -88,7 +88,7 @@ function MemberRow({ row, showOrganization, gap }: { row: MemberRankRow; showOrg
           </p>
           {showOrganization && <p className="truncate text-xs text-zinc-500">{row.organization}</p>}
         </div>
-        <span className="shrink-0 text-[15px] font-semibold tabular-nums">{row.doors.toLocaleString("fr")}</span>
+        <span className="shrink-0 text-[15px] font-semibold tabular-nums pr-3">{row.doors.toLocaleString("fr")}</span>
       </li>
     </>
   );
@@ -108,7 +108,7 @@ function OrganizationRow({ row, gap }: { row: OrganizationRankRow; gap: boolean 
             <Users className="size-3" /> {row.members}
           </p>
         </div>
-        <span className="shrink-0 text-[15px] font-semibold tabular-nums">{row.doors.toLocaleString("fr")}</span>
+        <span className="shrink-0 text-[15px] font-semibold tabular-nums pr-3">{row.doors.toLocaleString("fr")}</span>
       </li>
     </>
   );

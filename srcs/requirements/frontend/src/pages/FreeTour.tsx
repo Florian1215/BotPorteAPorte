@@ -107,9 +107,9 @@ export default function FreeTour() {
               key={`corridor-${radius}-${JSON.stringify(preview.corridor).length}`}
               data={{ type: "Feature", properties: {}, geometry: preview.corridor } as Feature}
               interactive={false}
-              style={{ color: "#c8102e", weight: 1.5, dashArray: "5 6", fillColor: "#c8102e", fillOpacity: 0.1 }}
+              style={{ color: "#d1271c", weight: 1.5, dashArray: "5 6", fillColor: "#d1271c", fillOpacity: 0.1 }}
             />
-            <Polyline positions={preview.route} interactive={false} pathOptions={{ color: "#c8102e", weight: 4, opacity: 0.7, lineCap: "round" }} />
+            <Polyline positions={preview.route} interactive={false} pathOptions={{ color: "#d1271c", weight: 4, opacity: 0.7, lineCap: "round" }} />
           </>
         )}
         {start && end && !(step === "radius" && preview) && (

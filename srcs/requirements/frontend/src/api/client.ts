@@ -27,12 +27,13 @@ function getCookie(name: string): string | null {
   return match ? decodeURIComponent(match.split("=")[1]) : null;
 }
 
-type Options = { method?: "GET" | "POST" | "DELETE"; body?: unknown; query?: Record<string, string | number> };
+type Options = { method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"; body?: unknown; query?: Record<string, string | number> };
 
 export async function api<T>(path: string, { method = "GET", body, query }: Options = {}): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json" };
+  const isForm = body instanceof FormData;
   if (method !== "GET") {
-    headers["Content-Type"] = "application/json";
+    if (!isForm) headers["Content-Type"] = "application/json";
     const token = getCookie("csrftoken");
     if (token) headers["X-CSRFToken"] = token;
   }
@@ -41,7 +42,7 @@ export async function api<T>(path: string, { method = "GET", body, query }: Opti
     method,
     headers,
     credentials: "same-origin",
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: body === undefined ? undefined : isForm ? body : JSON.stringify(body),
   });
   if (response.status === 204) return undefined as T;
   const data = await response.json().catch(() => null);

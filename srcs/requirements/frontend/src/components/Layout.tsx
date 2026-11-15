@@ -1,29 +1,53 @@
-import { useEffect, useState } from "react";
+import { Building2, ChevronRight, Globe, House, LandPlot, LogOut, type LucideIcon, Menu, Settings, ShieldCheck, Trophy, UserCheck, Users, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../context/AuthContext";
-import { GeoContext, useGeolocation } from "../hooks/useGeolocation";
+import { BackContext } from "../context/BackContext";
+import { useMapUI } from "../context/MapContext";
+import { GeoContext, lastKnownPosition, useGeolocation } from "../hooks/useGeolocation";
+import { usePendingCount } from "../hooks/usePendingCount";
+import { ROLE_LABEL } from "../lib/constants";
 import { MapLayers, UserPosition } from "./map";
+import { OrgLogo } from "./organization";
 import { FloatingButton } from "./ui";
 
-export const MENU = [
-  { to: "/", emoji: "🏠", label: "Accueil" },
-  { to: "/tours/new/free", emoji: "🧭", label: "Tournée libre" },
-  { to: "/tours/new/predefined", emoji: "📋", label: "Tournée préparée" },
-  { to: "/nearby", emoji: "📍", label: "Adresses alentours" },
-  { to: "/manual", emoji: "✍️", label: "Marquer une adresse" },
-  { to: "/stats", emoji: "📊", label: "Mes statistiques" },
+type MenuItem = { to: string; icon: LucideIcon; label: string; badge?: number; external?: boolean };
+
+export const MENU: MenuItem[] = [
+  { to: "/", icon: House, label: "Accueil" },
+  { to: "/ranking", icon: Trophy, label: "Classement" },
 ];
 
 /** Signed-in shell: shared geolocation, user dot on the map, floating top bar and side menu. */
 export default function Layout() {
   const geo = useGeolocation();
+  const { user } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const { pathname, key } = useLocation();
   const navigate = useNavigate();
   const isHome = pathname === "/";
+  const pending = usePendingCount();
+  const goBack = () => (key === "default" ? navigate("/") : navigate(-1));
 
   useEffect(() => setMenuOpen(false), [pathname]);
+
+  // Map background: the device position when available (pages fly to it), otherwise the organization's city.
+  const { map } = useMapUI();
+  const city = user?.organization?.city_lat != null && user.organization.city_lon != null
+    ? ([user.organization.city_lat, user.organization.city_lon] as [number, number])
+    : null;
+  const cityKey = city?.join(",");
+  const shownCity = useRef<string | null>(null);
+  useEffect(() => {
+    if (!map || !city || geo.status === "ok" || shownCity.current === cityKey) return;
+    // At startup (no remembered position) or when geolocation is refused / unavailable.
+    if (geo.status === "error" || !lastKnownPosition()) {
+      shownCity.current = cityKey ?? null;
+      map.setView(city, 13, { animate: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, cityKey, geo.status]);
 
   return (
     <GeoContext.Provider value={geo}>
@@ -32,87 +56,122 @@ export default function Layout() {
       </MapLayers>
 
       <div className="pointer-events-none absolute inset-x-0 top-0 z-[1100] flex items-center gap-2 px-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
-        {isHome ? (
-          <FloatingButton aria-label="Menu" onClick={() => setMenuOpen(true)}>
-            <MenuIcon />
-          </FloatingButton>
-        ) : (
-          <FloatingButton aria-label="Retour" onClick={() => (key === "default" ? navigate("/") : navigate(-1))}>
-            <svg viewBox="0 0 24 24" className="size-6" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </FloatingButton>
+        <FloatingButton aria-label="Menu" onClick={() => setMenuOpen(true)} className="relative">
+          <Menu className="size-[22px]" strokeWidth={2.25} />
+          {pending > 0 && <span className="absolute top-2.5 right-2.5 size-2.5 rounded-full bg-brand-600 ring-2 ring-white" />}
+        </FloatingButton>
+        {user?.organization && (
+          <div className="pointer-events-auto mx-auto flex h-12 min-w-0 items-center gap-2 rounded-full bg-white/90 py-1.5 pr-4 pl-1.5 shadow-float ring-1 ring-zinc-950/5 backdrop-blur-xl">
+            <OrgLogo organization={user.organization} className="size-9 rounded-full text-sm" />
+            <span className="truncate text-sm font-semibold tracking-tight">{user.organization.name}</span>
+          </div>
         )}
-        {!isHome && (
-          <FloatingButton aria-label="Menu" className="ml-auto" onClick={() => setMenuOpen(true)}>
-            <MenuIcon />
-          </FloatingButton>
-        )}
+        <span className="size-12 shrink-0" aria-hidden />
       </div>
 
-      <Outlet />
+      {/* Back button lives in the sheet header (next to the title), not in the top bar. */}
+      <BackContext.Provider value={isHome ? null : goBack}>
+        <Outlet />
+      </BackContext.Provider>
 
-      {menuOpen && <Drawer onClose={() => setMenuOpen(false)} />}
+      {menuOpen && <Drawer onClose={() => setMenuOpen(false)} pending={pending} />}
     </GeoContext.Provider>
   );
 }
 
-function MenuIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="size-6" fill="none" stroke="currentColor" strokeWidth="2.2">
-      <path d="M4 7h16M4 12h16M4 17h16" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function Drawer({ onClose }: { onClose: () => void }) {
+function Drawer({ onClose, pending }: { onClose: () => void; pending: number }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
 
+  const management = [
+    user?.can_validate && !user.can_manage_organization && { to: "/members", icon: UserCheck, label: "Inscriptions à valider", badge: pending },
+    user?.can_manage_organization && { to: "/members", icon: Users, label: "Membres", badge: pending },
+    user?.can_manage_organization && { to: "/organization", icon: Building2, label: "Mon organisation" },
+    user?.organization && (user.can_manage_organization || user.is_site_admin) && { to: "/areas", icon: LandPlot, label: "Zones" },
+    user?.is_site_admin && { to: "/organizations", icon: Globe, label: "Toutes les organisations" },
+    user?.is_site_admin && { to: "/site-admin", icon: ShieldCheck, label: "Admin" },
+    user?.is_staff && { to: "/admin/", icon: Settings, label: "Django", external: true },
+  ].filter(Boolean) as MenuItem[];
+  const items = user?.can_canvass ? MENU : [];
+  const initials = (user?.first_name || user?.email || "?").trim().charAt(0).toUpperCase();
+
   return (
     <div className="fixed inset-0 z-[1200] flex" role="dialog" aria-modal>
-      <nav className="flex h-full w-80 max-w-[85vw] animate-[slide-in_.2s_ease-out] flex-col bg-white shadow-2xl">
-        <div className="bg-brand-600 px-5 pt-[max(1.25rem,env(safe-area-inset-top))] pb-5 text-white">
-          <p className="text-2xl" aria-hidden>
-            🚪
-          </p>
-          <p className="mt-1 text-lg font-bold">{user?.first_name || user?.username}</p>
-          {user?.scope && <p className="text-sm opacity-90">{user.scope.name}</p>}
+      <nav className="flex h-full w-[19rem] max-w-[85vw] animate-[slide-in_.22s_cubic-bezier(.2,.8,.2,1)] flex-col bg-white shadow-2xl">
+        <div className="px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-3">
+          <div className="flex items-center justify-between">
+            <OrgLogo organization={user?.organization ?? null} className="size-11 text-lg" />
+            <button onClick={onClose} aria-label="Fermer le menu" className="flex size-10 items-center justify-center rounded-full text-zinc-500 active:bg-zinc-100">
+              <X className="size-5" />
+            </button>
+          </div>
+          <p className="mt-3 truncate text-[15px] font-semibold tracking-tight">{user?.organization?.name ?? "Aucune organisation"}</p>
+          <Link to="/account" onClick={onClose} className="mt-3 flex items-center gap-3 rounded-2xl bg-zinc-50 p-2.5 ring-1 ring-zinc-950/5 active:bg-zinc-100">
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-sm font-semibold text-white">{initials}</span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold">{[user?.first_name, user?.last_name].filter(Boolean).join(" ") || user?.email}</p>
+              {user && (
+                <p className="truncate text-xs text-zinc-500">
+                  {ROLE_LABEL[user.role]} · {user.email}
+                </p>
+              )}
+            </div>
+            <ChevronRight className="size-4 shrink-0 text-zinc-300" />
+          </Link>
         </div>
-        <ul className="flex-1 overflow-y-auto py-2">
-          {MENU.map((item) => (
-            <li key={item.to}>
-              <Link
-                to={item.to}
-                onClick={onClose}
-                className={`flex items-center gap-4 px-5 py-3.5 text-[15px] font-medium ${
-                  pathname === item.to ? "bg-brand-50 text-brand-700" : "text-slate-800 active:bg-slate-100"
-                }`}
-              >
-                <span className="w-6 text-center text-xl">{item.emoji}</span>
-                {item.label}
-              </Link>
-            </li>
+
+        <ul className="flex-1 space-y-0.5 overflow-y-auto px-2 py-2">
+          {items.map((item) => (
+            <MenuLink key={item.to} item={item} active={pathname === item.to} onClick={onClose} />
           ))}
-          {user?.is_staff && (
-            <li>
-              <a href="/admin/" className="flex items-center gap-4 px-5 py-3.5 text-[15px] font-medium text-slate-800 active:bg-slate-100">
-                <span className="w-6 text-center text-xl">⚙️</span>
-                Administration
-              </a>
-            </li>
-          )}
+          {management.length > 0 && <li className="px-3 pt-5 pb-1.5 text-xs font-semibold text-zinc-400">Gestion</li>}
+          {management.map((item) => (
+            <MenuLink key={item.to + item.label} item={item} active={pathname === item.to} onClick={onClose} />
+          ))}
         </ul>
-        <button
-          onClick={() => logout().then(() => navigate("/login"))}
-          className="flex items-center gap-4 border-t border-slate-100 px-5 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] text-left text-[15px] font-medium text-slate-600"
-        >
-          <span className="w-6 text-center text-xl">👋</span>
-          Déconnexion
-        </button>
+
+        <div className="border-t border-zinc-950/5 px-2 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <button
+            onClick={() => logout().then(() => navigate("/login"))}
+            className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-[15px] font-medium text-zinc-600 active:bg-zinc-100"
+          >
+            <LogOut className="size-5" />
+            Déconnexion
+          </button>
+        </div>
       </nav>
-      <button className="flex-1 animate-[fade-in_.2s_ease-out] bg-black/40" aria-label="Fermer le menu" onClick={onClose} />
+      <button className="flex-1 animate-[fade-in_.2s_ease-out] bg-zinc-950/40 backdrop-blur-[2px]" aria-label="Fermer le menu" onClick={onClose} />
     </div>
+  );
+}
+
+function MenuLink({ item, active, onClick }: { item: MenuItem; active: boolean; onClick: () => void }) {
+  const { to, icon: Icon, label, badge = 0, external } = item;
+  const className = `flex items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-medium transition ${
+    active ? "bg-brand-50 text-brand-700" : "text-zinc-700 active:bg-zinc-100"
+  }`;
+  const content = (
+    <>
+      <Icon className={`size-5 ${active ? "text-brand-600" : "text-zinc-400"}`} strokeWidth={2} />
+      <span className="flex-1">{label}</span>
+      {badge > 0 && (
+        <span className="min-w-6 rounded-full bg-brand-600 px-2 py-0.5 text-center text-xs font-semibold text-white tabular-nums">{badge}</span>
+      )}
+      {external && <ChevronRight className="size-4 text-zinc-300" />}
+    </>
+  );
+  return (
+    <li>
+      {external ? (
+        <a href={to} className={className}>
+          {content}
+        </a>
+      ) : (
+        <Link to={to} onClick={onClick} className={className}>
+          {content}
+        </Link>
+      )}
+    </li>
   );
 }

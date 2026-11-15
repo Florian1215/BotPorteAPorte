@@ -12,7 +12,7 @@ import { NEARBY_RADIUS_OPTIONS_KM, formatKm } from "../lib/constants";
 export default function Nearby() {
   const geo = useGeo();
   const [center, setCenter] = useState<LatLon | null>(null);
-  const [radius, setRadius] = useState<number>(1);
+  const [radius, setRadius] = useState<number>(0.2);
   const [data, setData] = useState<NearbyResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -64,9 +64,9 @@ export default function Nearby() {
               center={[center.lat, center.lon]}
               radius={radius * 1000}
               interactive={false}
-              pathOptions={{ color: "#c8102e", weight: 1.5, fillOpacity: 0.05 }}
+              pathOptions={{ color: "#c8102e", weight: 1.5, dashArray: "4 6", fillOpacity: 0.06 }}
             />
-            <PinMarker point={center} color="#16a34a" label="Centre" />
+            <PinMarker point={center} color="#18181b" label="Centre" kind="center" />
           </>
         )}
         {data?.addresses.map((a) => (
@@ -74,7 +74,7 @@ export default function Nearby() {
             key={a.id}
             center={[a.lat, a.lon]}
             radius={6}
-            pathOptions={{ color: "white", weight: 1.5, fillColor: "#2563eb", fillOpacity: 0.9 }}
+            pathOptions={{ color: "white", weight: 1.5, fillColor: "#c8102e", fillOpacity: 0.9 }}
           >
             <Popup>{a.label}</Popup>
           </CircleMarker>
@@ -85,7 +85,7 @@ export default function Nearby() {
         <Chips options={NEARBY_RADIUS_OPTIONS_KM} value={radius} onChange={setRadius} format={formatKm} />
         {!center && <LocationStatus geo={geo} onRetry={geo.retry} />}
         {data?.truncated && (
-          <p className="text-xs text-slate-500">Seules les {data.addresses.length} plus proches sont affichées sur la carte.</p>
+          <p className="text-xs text-zinc-500">Seules les {data.addresses.length} plus proches sont affichées sur la carte.</p>
         )}
         {error && <Alert>{error}</Alert>}
       </Sheet>

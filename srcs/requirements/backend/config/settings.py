@@ -104,6 +104,11 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
     "UNAUTHENTICATED_USER": "django.contrib.auth.models.AnonymousUser",
+    # Per IP, on the login endpoints (code requests / guesses); per-email limits are in accounts.views.
+    # Generous: a whole local group may log in at once from the same wifi.
+    "DEFAULT_THROTTLE_RATES": {"login": "120/hour"},
+    # Client IP taken from X-Forwarded-For as set by our nginx (+1 per extra proxy in front of it).
+    "NUM_PROXIES": int(env("NUM_PROXIES", "1")),
 }
 
 # Behind nginx
@@ -127,6 +132,44 @@ LOGGING = {
 ORS_TOKEN = env("ORS_TOKEN")
 NOMINATIM_DOMAIN = env("NOMINATIM_DOMAIN")  # blank = public nominatim.openstreetmap.org
 NOMINATIM_USER_AGENT = env("NOMINATIM_USER_AGENT", "canvassing-web")
+# Optional typo-tolerant search (self-hosted Photon server, e.g. photon:2322) used as a last resort for
+# hand-typed addresses. Blank = disabled (the public photon.komoot.io blocks bulk use).
+PHOTON_DOMAIN = env("PHOTON_DOMAIN")
 CANVASSING_MAX_STOPS = int(env("CANVASSING_MAX_STOPS", "250"))
 CANVASSING_TOUR_TIMEOUT_HOURS = int(env("CANVASSING_TOUR_TIMEOUT_HOURS", "24"))
 CANVASSING_DRAFT_TIMEOUT_HOURS = 2
+
+# --- Passwordless login (one-time code + link sent by email) ---
+LOGIN_CODE_TTL_MINUTES = int(env("LOGIN_CODE_TTL_MINUTES", "15"))
+LOGIN_CODE_MAX_ATTEMPTS = 5
+LOGIN_CODE_MAX_PER_HOUR = 5  # codes requested per email address
+# Public URL of the site, used in the login link (e.g. https://porte-a-porte.example.org). Blank = request host.
+PUBLIC_URL = env("PUBLIC_URL").rstrip("/")
+
+# Email: sent with Brevo's API when CLE_API_BREVO is set, else by SMTP when EMAIL_HOST is set,
+# else printed in the backend logs (development).
+BREVO_API_KEY = env("CLE_API_BREVO")
+EMAIL_HOST = env("EMAIL_HOST")
+if BREVO_API_KEY:
+    EMAIL_BACKEND = "accounts.brevo.BrevoEmailBackend"
+elif EMAIL_HOST:
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+else:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+EMAIL_PORT = int(env("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = env("EMAIL_HOST_USER")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD")
+EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", True)
+EMAIL_USE_SSL = env_bool("EMAIL_USE_SSL", False)
+EMAIL_TIMEOUT = 15
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", "Porte-à-porte <no-reply@localhost>")
+
+# --- Map tiles (CARTO Voyager basemap) ---
+CARTO_API_KEY = env("CARTO_API_KEY")
+MAP_TILE_URL = "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" + (
+    f"?key={CARTO_API_KEY}" if CARTO_API_KEY else ""
+)
+MAP_TILE_ATTRIBUTION = (
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> '
+    '&copy; <a href="https://carto.com/attributions">CARTO</a>'
+)

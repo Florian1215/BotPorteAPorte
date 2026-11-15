@@ -3,6 +3,7 @@ import L from "leaflet";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AttributionControl, Circle, CircleMarker, MapContainer, Marker, TileLayer, useMap, useMapEvents } from "react-leaflet";
 
+import { api } from "../api/client";
 import type { LatLon } from "../api/types";
 import { MapUIContext, useMapUI } from "../context/MapContext";
 import { lastKnownPosition } from "../hooks/useGeolocation";
@@ -11,16 +12,37 @@ import { DEFAULT_CENTER } from "../lib/constants";
 /** Height reserved for the floating top bar. */
 const TOP_BAR_PX = 72;
 
+type TileConfig = { tile_url: string; attribution: string };
+
+/** Used if /api/config/ cannot be reached: keyless CARTO tiles. */
+const FALLBACK_TILES: TileConfig = {
+  tile_url: "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
+  attribution:
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+};
+
+/** Tile URL (with the CARTO API key) comes from the backend at runtime, so the key lives only in srcs/.env. */
+function useTileConfig(): TileConfig | null {
+  const [tiles, setTiles] = useState<TileConfig | null>(null);
+  useEffect(() => {
+    api<{ map: TileConfig }>("/config/")
+      .then((config) => setTiles(config.map))
+      .catch(() => setTiles(FALLBACK_TILES));
+  }, []);
+  return tiles;
+}
+
 /** Full-screen map, always mounted behind the whole app. */
 export function MapShell({ children }: { children: ReactNode }) {
   const [map, setMap] = useState<L.Map | null>(null);
+  const tiles = useTileConfig();
   const sheetHeight = useRef(0);
   const initial = useMemo(() => lastKnownPosition(), []);
   const ui = useMemo(() => ({ map, sheetHeight }), [map]);
 
   return (
     <MapUIContext.Provider value={ui}>
-      <div className="fixed inset-0 overflow-hidden bg-slate-200">
+      <div className="fixed inset-0 overflow-hidden bg-zinc-100">
         <MapContainer
           ref={setMap}
           center={initial ?? DEFAULT_CENTER}
@@ -30,11 +52,7 @@ export function MapShell({ children }: { children: ReactNode }) {
           attributionControl={false}
           preferCanvas
         >
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            maxZoom={19}
-          />
+          {tiles && <TileLayer attribution={tiles.attribution} url={tiles.tile_url} maxZoom={20} />}
           <AttributionControl position="topright" prefix={false} />
         </MapContainer>
         {children}
@@ -79,7 +97,8 @@ export function FitBounds({ points, fitKey, maxZoom = 17 }: { points: [number, n
     }
     map.flyToBounds(L.latLngBounds(points), {
       paddingTopLeft: [24, TOP_BAR_PX + 8],
-      paddingBottomRight: [24, (sheetHeight.current ?? 0) + 16],
+      // A tall sheet on a short screen would leave a sliver of map: never reserve more than 60 % of it.
+      paddingBottomRight: [24, Math.min((sheetHeight.current ?? 0) + 16, map.getSize().y * 0.6)],
       maxZoom,
       duration: 0.6,
     });
@@ -114,7 +133,7 @@ export function UserPosition({ position }: { position: (LatLon & { accuracy: num
           center={center}
           radius={position.accuracy}
           interactive={false}
-          pathOptions={{ color: "#2563eb", weight: 1, fillOpacity: 0.08 }}
+          pathOptions={{ color: "#2563eb", weight: 1, opacity: 0.4, fillOpacity: 0.08 }}
         />
       )}
       <CircleMarker
@@ -127,28 +146,53 @@ export function UserPosition({ position }: { position: (LatLon & { accuracy: num
   );
 }
 
-export function stopIcon(label: string | number, color: string, current = false, size = 28): L.DivIcon {
+export function stopIcon(label: string | number, color: string, current = false, size = 28, count = 1): L.DivIcon {
+  const badge = count > 1 ? `<span class="stop-count">${count}</span>` : "";
   return L.divIcon({
     className: "",
-    html: `<div class="stop-marker${current ? " current" : ""}" style="background:${color};width:${size}px;height:${size}px">${label}</div>`,
+    html: `<div class="stop-marker${current ? " current" : ""}" style="background:${color};width:${size}px;height:${size}px">${label}${badge}</div>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
   });
 }
 
-export function PinMarker({ point, color, label }: { point: LatLon; color: string; label: string }) {
+const PIN_ICONS = {
+  start: '<polygon points="7 4 19 12 7 20 7 4" fill="currentColor"/>',
+  end: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" fill="currentColor"/><line x1="4" x2="4" y1="22" y2="15"/>',
+  center: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3" fill="currentColor"/>',
+  place: '<path d="M20 10c0 5-8 12-8 12s-8-7-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/>',
+};
+
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+}
+
+export function PinMarker({
+  point,
+  color,
+  label,
+  kind = "place",
+}: {
+  point: LatLon;
+  color: string;
+  label: string;
+  kind?: keyof typeof PIN_ICONS;
+}) {
   const icon = useMemo(
     () =>
       L.divIcon({
         className: "",
-        html: `<div style="transform:translate(-50%,-100%);position:absolute;left:0;top:0;display:flex;flex-direction:column;align-items:center">
-          <div style="background:${color};color:white;font-weight:700;font-size:12px;padding:3px 8px;border-radius:9999px;box-shadow:0 1px 4px rgba(0,0,0,.35);white-space:nowrap">${label}</div>
-          <div style="width:2px;height:10px;background:${color}"></div>
-          <div style="width:10px;height:10px;border-radius:9999px;background:${color};border:2px solid white;margin-top:-3px"></div>
+        html: `<div class="map-pin">
+          <div class="map-pin-label" style="background:${color}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${PIN_ICONS[kind]}</svg>
+            ${escapeHtml(label)}
+          </div>
+          <div class="map-pin-stem" style="background:${color}"></div>
+          <div class="map-pin-dot" style="background:${color}"></div>
         </div>`,
         iconSize: [0, 0],
       }),
-    [color, label],
+    [color, label, kind],
   );
   return <Marker position={[point.lat, point.lon]} icon={icon} interactive={false} />;
 }

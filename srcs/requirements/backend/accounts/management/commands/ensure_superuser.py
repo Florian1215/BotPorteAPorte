@@ -2,23 +2,24 @@ import os
 
 from django.core.management.base import BaseCommand
 
-from accounts.models import User
+from accounts.models import Role, User, normalize_email
 
 
 class Command(BaseCommand):
-    help = "Create the superuser from DJANGO_SUPERUSER_USERNAME / DJANGO_SUPERUSER_PASSWORD if it does not exist."
+    help = (
+        "Make DJANGO_SUPERUSER_EMAIL a site administrator (created if needed). "
+        "No password: they log in with a code sent by email, like everyone."
+    )
 
     def handle(self, *args, **options):
-        username = os.environ.get("DJANGO_SUPERUSER_USERNAME")
-        password = os.environ.get("DJANGO_SUPERUSER_PASSWORD")
-        if not username or not password:
+        email = normalize_email(os.environ.get("DJANGO_SUPERUSER_EMAIL", ""))
+        if not email:
             return
-        if User.objects.filter(username=username).exists():
-            return
-        User.objects.create_superuser(
-            username=username,
-            email=os.environ.get("DJANGO_SUPERUSER_EMAIL", ""),
-            password=password,
-            is_approved=True,
-        )
-        self.stdout.write(self.style.SUCCESS(f"Superuser '{username}' created."))
+        user, created = User.objects.get_or_create(email=email)
+        if created:
+            user.set_unusable_password()
+        if created or not (user.is_superuser and user.is_staff and user.is_approved):
+            user.is_superuser = user.is_staff = user.is_approved = True
+            user.role = Role.ADMIN
+            user.save()
+            self.stdout.write(self.style.SUCCESS(f"Site administrator: {email}"))

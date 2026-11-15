@@ -1,12 +1,16 @@
 @import "tailwindcss";
 
 @theme {
-  --color-brand-50: #fdf2f3;
-  --color-brand-100: #fbe3e6;
+  --color-brand-50: #fff1f2;
+  --color-brand-100: #ffe1e4;
+  --color-brand-200: #fec8ce;
   --color-brand-500: #e11d48;
   --color-brand-600: #c8102e;
   --color-brand-700: #a50d26;
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --color-brand-900: #5f0a17;
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --shadow-sheet: 0 -8px 40px -12px rgb(15 23 42 / 0.25), 0 -1px 0 rgb(15 23 42 / 0.04);
+  --shadow-float: 0 6px 20px -6px rgb(15 23 42 / 0.25), 0 1px 3px rgb(15 23 42 / 0.08);
 }
 
 html,
@@ -18,21 +22,25 @@ body,
 }
 
 body {
-  @apply bg-slate-200 text-slate-900 antialiased;
+  @apply bg-zinc-100 text-zinc-900 antialiased;
+  font-feature-settings: "cv11", "ss01";
   -webkit-tap-highlight-color: transparent;
 }
 
 .leaflet-container {
   font-family: inherit;
+  background: #f4f4f5;
 }
 
 /* Keep Leaflet's top controls (attribution) below the floating top bar. */
 .leaflet-top {
-  top: calc(env(safe-area-inset-top) + 4.5rem);
+  top: calc(env(safe-area-inset-top) + 4.75rem);
 }
 .leaflet-control-attribution {
-  border-radius: 6px 0 0 6px;
+  border-radius: 8px 0 0 8px;
   font-size: 10px;
+  background: rgb(255 255 255 / 0.75) !important;
+  backdrop-filter: blur(8px);
 }
 
 /* Numbered stop markers */
@@ -41,21 +49,79 @@ body {
   align-items: center;
   justify-content: center;
   border-radius: 9999px;
-  border: 2px solid white;
+  border: 2.5px solid white;
   color: white;
-  font-weight: 700;
+  font-weight: 650;
   font-size: 12px;
-  box-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 4px 10px -2px rgb(15 23 42 / 0.35);
+}
+.stop-marker {
+  position: relative;
+}
+/* Several people at the same address */
+.stop-count {
+  position: absolute;
+  top: -7px;
+  right: -9px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 9999px;
+  background: white;
+  color: #18181b;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
+  box-shadow: 0 1px 4px rgb(15 23 42 / 0.35);
 }
 .stop-marker.current {
   font-size: 14px;
-  outline: 3px solid rgb(200 16 46 / 0.35);
-  animation: pulse 1.6s ease-in-out infinite;
+  /* Crisp ring (no colored glow) to spot the next door */
+  box-shadow:
+    0 0 0 3px white,
+    0 0 0 5px #18181b,
+    0 4px 10px -2px rgb(15 23 42 / 0.35);
 }
-@keyframes pulse {
-  50% {
-    outline-width: 8px;
-  }
+
+/* Labelled pins (start / end / center) */
+.map-pin {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.map-pin-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: white;
+  font-weight: 600;
+  font-size: 12px;
+  padding: 4px 10px 4px 8px;
+  border-radius: 9999px;
+  white-space: nowrap;
+  box-shadow: 0 6px 14px -4px rgb(15 23 42 / 0.45);
+}
+.map-pin-label svg {
+  width: 13px;
+  height: 13px;
+}
+.map-pin-stem {
+  width: 2px;
+  height: 9px;
+}
+.map-pin-dot {
+  width: 12px;
+  height: 12px;
+  margin-top: -2px;
+  border-radius: 9999px;
+  border: 2.5px solid white;
+  box-shadow: 0 2px 6px rgb(15 23 42 / 0.35);
 }
 
 @keyframes slide-in {
@@ -67,4 +133,39 @@ body {
   from {
     opacity: 0;
   }
+}
+@keyframes sheet-in {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+}
+@keyframes step-in {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+}
+
+/* Score labels of the polling districts (zones map, zoomed in) */
+.district-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  white-space: nowrap;
+  border-radius: 9999px;
+  padding: 1px 7px;
+  background: rgb(255 255 255 / 0.92);
+  color: #18181b;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 1px 4px rgb(15 23 42 / 0.25);
+}
+.district-label small {
+  font-size: 10px;
+  font-weight: 600;
+  color: #52525b;
 }

@@ -8,3 +8,5 @@ srcs/requirements/backend/staticfiles/
 *.tsbuildinfo
 canvassing-bot
 .idea
+postgres-*.sql
+/LEC

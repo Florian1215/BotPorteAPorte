@@ -1,7 +1,10 @@
+import hashlib
+
 from django.conf import settings
+from django.utils import timezone
 from django.contrib.gis.db import models
 
-from accounts.models import Scope
+from accounts.models import Organization
 
 
 class Status(models.IntegerChoices):
@@ -25,6 +28,13 @@ class VisitResult(models.TextChoices):
     ADDRESS_FAILURE = "address_failure", "Adresse introuvable"
 
 
+class AbsentDetail(models.TextChoices):
+    """What was done when nobody answered (only for `VisitResult.ADDRESS_TO_RETRY`)."""
+
+    LEAFLET = "leaflet", "Tract boîté"
+    MAILBOX_INACCESSIBLE = "mailbox_inaccessible", "Boîte aux lettres inaccessible"
+
+
 RESULT_TO_STATUS = {
     VisitResult.COMMITMENT_TO_VOTE: Status.COMMITMENT_TO_VOTE,
     VisitResult.GOOD_CONVERSATION: Status.GOOD_CONVERSATION,
@@ -42,9 +52,27 @@ def semi_anonymize_name(name: str, show_n_first_letters: int = 3) -> str:
     return name[:show_n_first_letters] + "*" * (len(name) - show_n_first_letters)
 
 
+def address_key(name: str, first_names: str, address: str, zip_code: str, city: str) -> str:
+    """Identity of an address across imports when the file gives no id.
+
+    The name is semi-anonymized first: lists used to be stored that way ("Mar***"), so full names imported now
+    still match those rows (and `semi_anonymize_name` is idempotent).
+    """
+    parts = [" ".join(str(p).lower().split()) for p in (semi_anonymize_name(name), first_names, address, zip_code, city)]
+    return "k:" + hashlib.sha256("|".join(parts).encode()).hexdigest()[:40]
+
+
+class ActiveAddressManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(disabled_at__isnull=True)
+
+
 class Address(models.Model):
-    scope = models.ForeignKey(Scope, on_delete=models.CASCADE, related_name="addresses")
-    name = models.CharField("nom d'usage (semi-anonymisé)", max_length=255)
+    """A voter to visit. Addresses that disappeared from the latest import are disabled (`disabled_at`):
+    kept for history and statistics, but hidden everywhere (`Address.objects` excludes them)."""
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="addresses")
+    name = models.CharField("nom d'usage", max_length=255)
     first_names = models.CharField("prénoms", max_length=255, blank=True)
     address = models.CharField("adresse", max_length=255)
     zip_code = models.CharField("code postal", max_length=16)
@@ -55,10 +83,35 @@ class Address(models.Model):
     visit_planned_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
+    source_key = models.CharField(
+        "clé d'import", max_length=255, blank=True, default="", help_text="Identifie l'adresse d'un import à l'autre."
+    )
+    disabled_at = models.DateTimeField(
+        "désactivée le", null=True, blank=True, help_text="Absente du dernier import : plus visible par personne."
+    )
+    birth_year = models.PositiveSmallIntegerField("année de naissance", null=True, blank=True)
+    # Address exactly as written in the imported list: tells whether a person moved since the last import
+    # (the `address` field holds the geocoder's normalized spelling).
+    source_address = models.CharField("adresse d'origine", max_length=512, blank=True, default="")
+
+    objects = ActiveAddressManager()
+    all_objects = models.Manager()
 
     class Meta:
         verbose_name = "adresse"
-        indexes = [models.Index(fields=["scope", "status"])]
+        base_manager_name = "all_objects"  # tour stops / visits keep pointing at disabled addresses
+        indexes = [
+            models.Index(fields=["organization", "status"], name="canvassing__organiz_status_idx"),
+            models.Index(fields=["organization", "source_key"], name="canvassing__organiz_srckey_idx"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self.source_key:
+            self.source_key = self.compute_key()
+        super().save(*args, **kwargs)
+
+    def compute_key(self) -> str:
+        return address_key(self.name, self.first_names, self.address, self.zip_code, self.city)
 
     def __str__(self) -> str:
         return f"{self.name} — {self.full_address}"
@@ -76,33 +129,93 @@ class Address(models.Model):
         return f"{self.address}, {self.zip_code} {self.city}"
 
     @property
-    def display_name(self) -> str:
-        return semi_anonymize_name(self.name)
-
-    @property
     def first_name(self) -> str:
         return self.first_names.split(" ")[0] if self.first_names else ""
 
 
-class Area(models.Model):
-    """A predefined canvassing area prepared by the coordinators (e.g. a polling district)."""
+class District(models.Model):
+    """A polling station district (Wahlbezirk), imported from the official electoral map: not editable.
 
-    scope = models.ForeignKey(Scope, on_delete=models.CASCADE, related_name="areas")
+    Carries the election result and census figures of the district, and a score (0–100) telling how likely
+    canvassing there reaches our voters (see `services/scoring.py`).
+    """
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="districts")
+    code = models.CharField("numéro", max_length=32)
     name = models.CharField("nom", max_length=255)
-    geometry = models.GeometryField(srid=4326)
-    status = models.IntegerField(choices=Status.choices, default=Status.TO_VISIT)
-    score = models.FloatField(default=0.0, help_text="Plus le score est élevé, plus la zone est prioritaire.")
-    visit_planned_at = models.DateTimeField(null=True, blank=True)
-    visit_planned_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
-    )
+    geometry = models.MultiPolygonField(srid=4326)
+    # Lighter outline for the map, and a point inside the polygon to anchor its label.
+    geometry_simple = models.MultiPolygonField(srid=4326, null=True, blank=True)
+    label_point = models.PointField(srid=4326, null=True, blank=True)
+    area_km2 = models.FloatField(default=0)
+
+    # Election result (postal votes included when the source counts them separately).
+    election = models.CharField("élection", max_length=128, blank=True, default="")
+    eligible = models.FloatField("inscrit·es", null=True, blank=True)
+    voters = models.FloatField("votant·es", null=True, blank=True)
+    valid = models.FloatField("exprimés", null=True, blank=True)
+    linke = models.FloatField("voix Die Linke", null=True, blank=True)
+    parties = models.JSONField("voix par parti", default=dict, blank=True)
+
+    # Census 2022 (100 m grid cells whose centre lies in the district).
+    population = models.IntegerField(null=True, blank=True)
+    share_18_29 = models.FloatField(null=True, blank=True)
+    share_65_plus = models.FloatField(null=True, blank=True)
+    share_foreign = models.FloatField(null=True, blank=True)
+    rent_m2 = models.FloatField("loyer net moyen (€/m²)", null=True, blank=True)
+
+    score = models.FloatField(default=0, db_index=True)
+    score_parts = models.JSONField(default=dict, blank=True)
 
     class Meta:
-        verbose_name = "zone"
-        ordering = ["-score", "name"]
+        verbose_name = "bureau de vote"
+        verbose_name_plural = "bureaux de vote"
+        ordering = ["-score", "code"]
+        constraints = [models.UniqueConstraint(fields=["organization", "code"], name="district_unique_code")]
 
     def __str__(self) -> str:
         return self.name
+
+
+class DistrictImport(models.Model):
+    """One import of the electoral map of an organization. Runs in a background thread (it takes a while)."""
+
+    class ImportStatus(models.TextChoices):
+        PENDING = "pending", "Fichiers reçus"
+        RUNNING = "running", "En cours"
+        DONE = "done", "Terminé"
+        FAILED = "failed", "Échec"
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="district_imports")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    source = models.CharField(max_length=32)  # a preset key, or "custom"
+    status = models.CharField(max_length=16, choices=ImportStatus.choices, default=ImportStatus.PENDING)
+    message = models.TextField(blank=True, default="")
+    report = models.JSONField(default=dict, blank=True)
+    # Uploaded files of a custom import, kept between the "inspect" and the "start" steps.
+    geometry_file = models.BinaryField(null=True, blank=True, editable=False)
+    results_file = models.BinaryField(null=True, blank=True, editable=False)
+    results_filename = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+class CensusCell(models.Model):
+    """A populated 100 m cell of the 2022 German census grid (shared by every organization)."""
+
+    grid_id = models.CharField(max_length=40, unique=True)
+    point = models.PointField(srid=4326)  # cell centre
+    population = models.IntegerField()
+    # Age counts are blank in small cells (statistical secrecy): `age_known` is the population they cover.
+    age_known = models.IntegerField(default=0)
+    age_18_29 = models.IntegerField(default=0)
+    age_65_plus = models.IntegerField(default=0)
+    share_foreign = models.FloatField(null=True)
+    rent_m2 = models.FloatField(null=True)
+    dwellings = models.IntegerField(null=True)
 
 
 class Tour(models.Model):
@@ -116,10 +229,10 @@ class Tour(models.Model):
         COMPLETED = "completed", "Terminée"
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="tours")
-    scope = models.ForeignKey(Scope, on_delete=models.CASCADE, related_name="tours")
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="tours")
     kind = models.CharField(max_length=16, choices=Kind.choices)
     status = models.CharField(max_length=16, choices=TourStatus.choices, default=TourStatus.DRAFT, db_index=True)
-    area = models.ForeignKey(Area, null=True, blank=True, on_delete=models.SET_NULL, related_name="tours")
+    area = models.ForeignKey(District, null=True, blank=True, on_delete=models.SET_NULL, related_name="tours")
     start_point = models.PointField(srid=4326)
     end_point = models.PointField(srid=4326, null=True, blank=True)
     radius_km = models.FloatField(null=True, blank=True)
@@ -145,22 +258,86 @@ class TourStop(models.Model):
     address = models.ForeignKey(Address, on_delete=models.CASCADE, related_name="tour_stops")
     position = models.PositiveIntegerField()
     result = models.CharField(max_length=32, choices=VisitResult.choices, blank=True, default="")
+    absent_detail = models.CharField(max_length=32, choices=AbsentDetail.choices, blank=True, default="")
     visited_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["position"]
 
 
+class Election(models.Model):
+    """An election campaign (consular, presidential, legislative…). One is current for the whole site: new
+    visits belong to it, and choosing another one starts the canvassing over (see `services/elections.py`)."""
+
+    name = models.CharField("nom", max_length=128, unique=True)
+    is_current = models.BooleanField("en cours", default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField("en cours depuis", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "élection"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["is_current"], condition=models.Q(is_current=True), name="one_current_election")
+        ]
+
+    def __str__(self) -> str:
+        return self.name
+
+    @classmethod
+    def current(cls) -> "Election | None":
+        return cls.objects.filter(is_current=True).first()
+
+
 class Visit(models.Model):
-    """Log of every feedback given on an address (from a tour or entered manually). Used for statistics."""
+    """Log of every feedback given on an address (given during a tour). Used for statistics."""
 
     address = models.ForeignKey(Address, on_delete=models.CASCADE, related_name="visits")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="visits")
     tour = models.ForeignKey(Tour, null=True, blank=True, on_delete=models.SET_NULL, related_name="visits")
     stop = models.OneToOneField(TourStop, null=True, blank=True, on_delete=models.SET_NULL, related_name="visit")
     result = models.CharField(max_length=32, choices=VisitResult.choices)
-    created_at = models.DateTimeField(auto_now_add=True)
+    absent_detail = models.CharField(max_length=32, choices=AbsentDetail.choices, blank=True, default="")
+    election = models.ForeignKey(Election, null=True, blank=True, on_delete=models.SET_NULL, related_name="visits")
+    # Not auto_now_add: visits imported from the Telegram bot keep their date.
+    created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         verbose_name = "visite"
+        ordering = ["-created_at"]
+
+
+class GeocodeCache(models.Model):
+    """Result of geocoding one street address (shared by all imports): an address is only looked up once."""
+
+    query = models.CharField(max_length=512, unique=True)
+    found = models.BooleanField(default=False)
+    street = models.CharField(max_length=255, blank=True, default="")
+    zip_code = models.CharField(max_length=16, blank=True, default="")
+    city = models.CharField(max_length=128, blank=True, default="")
+    lat = models.FloatField(null=True)
+    lon = models.FloatField(null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class AddressImport(models.Model):
+    """Import of an organization's voter list, run in the background (geocoding takes a while)."""
+
+    class ImportStatus(models.TextChoices):
+        RUNNING = "running", "En cours"
+        DONE = "done", "Terminé"
+        FAILED = "failed", "Échec"
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="address_imports")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    filename = models.CharField(max_length=255, blank=True, default="")
+    status = models.CharField(max_length=16, choices=ImportStatus.choices, default=ImportStatus.RUNNING)
+    message = models.TextField(blank=True, default="")
+    report = models.JSONField(default=dict, blank=True)
+    geocode_total = models.IntegerField(default=0)
+    geocode_done = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
         ordering = ["-created_at"]

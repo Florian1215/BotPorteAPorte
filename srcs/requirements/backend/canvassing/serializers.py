@@ -2,7 +2,7 @@ import json
 
 from rest_framework import serializers
 
-from .models import Address, Area, Tour, TourStop, VisitResult
+from .models import AbsentDetail, Address, District, Tour, TourStop, VisitResult
 
 
 class PointSerializer(serializers.Serializer):
@@ -29,31 +29,91 @@ def address_to_dict(address: Address, with_names: bool = True) -> dict:
         "lon": address.lon,
     }
     if with_names:
-        data["name"] = address.display_name
+        # Full name: the militant needs it to find the right doorbell.
+        data["name"] = address.name
         data["first_name"] = address.first_name
+        data["first_names"] = address.first_names
+        data["birth_year"] = address.birth_year
     return data
 
 
-def area_to_dict(area: Area, n_to_visit: int | None = None) -> dict:
-    data = {"id": area.id, "name": area.name, "score": area.score, "geometry": json.loads(area.geometry.geojson)}
+def geojson(geometry) -> dict | None:
+    return None if geometry is None else json.loads(geometry.geojson)
+
+
+def with_outline(queryset):
+    """Districts with their simplified outline as GeoJSON text, coordinates rounded to ~1 m (lighter map)."""
+    from django.contrib.gis.db.models.functions import AsGeoJSON
+
+    return queryset.defer("geometry", "geometry_simple").annotate(outline=AsGeoJSON("geometry_simple", precision=5))
+
+
+def district_to_dict(district: District, n_to_visit: int | None = None, done_pct: float | None = None) -> dict:
+    """Compact form (map, lists): the simplified outline only."""
+    data = {
+        "id": district.id,
+        "code": district.code,
+        "name": district.name,
+        "score": district.score,
+        # `outline`: GeoJSON text annotated by the query (rounded coordinates, see `with_outline`).
+        "geometry": json.loads(o) if (o := getattr(district, "outline", None)) else geojson(district.geometry_simple or district.geometry),
+        "label": point_to_dict(district.label_point),
+    }
     if n_to_visit is not None:
         data["n_to_visit"] = n_to_visit
+    if done_pct is not None:
+        data["done_pct"] = done_pct
     return data
 
 
-def stop_to_dict(stop: TourStop) -> dict:
+def short_name(user) -> str:
+    """"Camille M." — enough to recognise each other, without exposing full names across organizations."""
+    first = user.first_name.strip() or "Militant·e"
+    return f"{first} {user.last_name.strip()[0]}." if user.last_name.strip() else first
+
+
+def stop_to_dict(stop: TourStop, last_visit: dict | None = None) -> dict:
     return {
         "id": stop.id,
         "position": stop.position,
         "result": stop.result or None,
+        "absent_detail": stop.absent_detail or None,
         "visited_at": stop.visited_at,
+        # Last time someone knocked at this door (in another tour, possibly for a past election), if ever.
+        "last_visit": last_visit,
         "address": address_to_dict(stop.address),
+    }
+
+
+def last_visit_by_address(tour: Tour, address_ids) -> dict:
+    from .models import Visit
+    from .services.elections import phrase
+
+    visits = (
+        Visit.objects.filter(address_id__in=address_ids)
+        .exclude(tour=tour)
+        .select_related("user", "election")
+        .order_by("address_id", "-created_at")
+        .distinct("address_id")
+    )
+    return {
+        v.address_id: {
+            "at": v.created_at,
+            "by": short_name(v.user) if v.user else None,
+            "result": v.result,
+            "detail": v.absent_detail or None,
+            "election": phrase(v.election) or None,  # "pour l'élection consulaire 2026"
+            "current_election": bool(v.election and v.election.is_current),
+        }
+        for v in visits
     }
 
 
 def tour_to_dict(tour: Tour) -> dict:
     from .services.tours import tour_summary
 
+    stops = list(tour.stops.select_related("address"))
+    last_visit = last_visit_by_address(tour, [s.address_id for s in stops])
     return {
         "id": tour.id,
         "kind": tour.kind,
@@ -70,7 +130,7 @@ def tour_to_dict(tour: Tour) -> dict:
         "created_at": tour.created_at,
         "started_at": tour.started_at,
         "ended_at": tour.ended_at,
-        "stops": [stop_to_dict(s) for s in tour.stops.select_related("address")],
+        "stops": [stop_to_dict(s, last_visit.get(s.address_id)) for s in stops],
         "summary": tour_summary(tour),
     }
 
@@ -92,28 +152,23 @@ class CreateTourSerializer(serializers.Serializer):
         return attrs
 
 
+class FreeTourPreviewSerializer(serializers.Serializer):
+    start = PointSerializer()
+    end = PointSerializer()
+    radius_km = serializers.FloatField(min_value=0.05, max_value=10)
+
+
 class ResultSerializer(serializers.Serializer):
     result = serializers.ChoiceField(choices=VisitResult.choices)
+    # Only for "absent": leaflet left in the mailbox, or mailbox out of reach.
+    absent_detail = serializers.ChoiceField(choices=AbsentDetail.choices, required=False, allow_blank=True, default="")
+
+
+class StopsResultSerializer(ResultSerializer):
+    stop_ids = serializers.ListField(child=serializers.IntegerField(), min_length=1, max_length=50)
 
 
 class NearbySerializer(serializers.Serializer):
     lat = serializers.FloatField(min_value=-90, max_value=90)
     lon = serializers.FloatField(min_value=-180, max_value=180)
     radius_km = serializers.FloatField(min_value=0.1, max_value=50)
-
-
-class ManualGeocodeSerializer(serializers.Serializer):
-    street = serializers.CharField(max_length=255)
-    postcode_city = serializers.CharField(max_length=255)
-
-
-class ManualSearchSerializer(serializers.Serializer):
-    address = serializers.CharField(max_length=255)
-    zip_code = serializers.CharField(max_length=16)
-    city = serializers.CharField(max_length=128)
-    name = serializers.CharField(min_length=3, max_length=255)
-
-
-class ManualMarkSerializer(serializers.Serializer):
-    address_ids = serializers.ListField(child=serializers.IntegerField(), min_length=1, max_length=50)
-    result = serializers.ChoiceField(choices=VisitResult.choices)

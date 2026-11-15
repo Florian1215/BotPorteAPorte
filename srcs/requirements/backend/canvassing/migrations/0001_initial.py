@@ -10,6 +10,9 @@ class Migration(migrations.Migration):
 
     initial = True
 
+    # Created against `accounts.Scope`: must run before accounts renames it to Organization (fresh databases).
+    run_before = [("accounts", "0002_organizations_and_roles")]
+
     dependencies = [
         ('accounts', '0001_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),

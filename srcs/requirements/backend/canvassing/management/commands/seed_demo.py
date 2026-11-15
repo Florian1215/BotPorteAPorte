@@ -2,11 +2,11 @@
 import math
 import random
 
-from django.contrib.gis.geos import Point, Polygon
+from django.contrib.gis.geos import Point
 from django.core.management.base import BaseCommand
 
-from accounts.models import Scope, User
-from canvassing.models import Address, Area, semi_anonymize_name
+from accounts.models import Organization, Role, User
+from canvassing.models import Address
 
 CENTER = (52.5163, 13.4135)  # Berlin Mitte
 STREETS = [
@@ -19,27 +19,19 @@ FAMILY = ["Martin", "Bernard", "Dubois", "Thomas", "Robert", "Richard", "Petit",
 FIRST = ["Camille", "Léa", "Lucas", "Hugo", "Chloé", "Louis", "Emma", "Jules", "Inès", "Nathan", "Manon", "Adam"]
 
 
-def hexagon(lat: float, lon: float, radius_km: float) -> Polygon:
-    pts = []
-    for k in range(7):
-        angle = math.radians(60 * k)
-        pts.append((lon + radius_km / (111.32 * math.cos(math.radians(lat))) * math.cos(angle),
-                    lat + radius_km / 111.32 * math.sin(angle)))
-    return Polygon(pts, srid=4326)
-
-
 class Command(BaseCommand):
-    help = "Create a demo scope with fake addresses, areas and a demo militant account (dev only)."
+    help = "Create a demo organization with fake addresses and a demo militant account (dev only)."
 
     def add_arguments(self, parser):
         parser.add_argument("--count", type=int, default=800)
-        parser.add_argument("--reset", action="store_true", help="Delete the demo scope first")
+        parser.add_argument("--reset", action="store_true", help="Delete the demo organization first")
 
     def handle(self, *args, count, reset, **options):
         if reset:
-            Scope.objects.filter(code="demo-berlin").delete()
-        scope, _ = Scope.objects.get_or_create(
-            code="demo-berlin", defaults={"name": "Démo Berlin", "country_code": "DE"}
+            Organization.objects.filter(code="demo-berlin").delete()
+        organization, _ = Organization.objects.get_or_create(
+            code="demo-berlin",
+            defaults={"name": "Démo Berlin", "country_code": "DE", "city": "Berlin", "city_lat": 52.5170, "city_lon": 13.3889},
         )
         rng = random.Random(42)
         addresses = []
@@ -50,8 +42,8 @@ class Command(BaseCommand):
             lon = CENTER[1] + r_km / (111.32 * math.cos(math.radians(CENTER[0]))) * math.cos(theta)
             addresses.append(
                 Address(
-                    scope=scope,
-                    name=semi_anonymize_name(rng.choice(FAMILY)),
+                    organization=organization,
+                    name=rng.choice(FAMILY),
                     first_names=f"{rng.choice(FIRST)} {rng.choice(FIRST)}",
                     address=f"{rng.choice(STREETS)} {rng.randint(1, 180)}",
                     zip_code=rng.choice(["10115", "10119", "10178", "10243", "10405", "10997"]),
@@ -59,27 +51,27 @@ class Command(BaseCommand):
                     location=Point(lon, lat, srid=4326),
                 )
             )
+        for a in addresses:
+            a.source_key = a.compute_key()
         Address.objects.bulk_create(addresses)
 
-        if not scope.areas.exists():
-            for name, (lat, lon), score in [
-                ("Mitte — Rosenthaler Platz", (52.5296, 13.4013), 0.92),
-                ("Prenzlauer Berg — Senefelderplatz", (52.5326, 13.4127), 0.81),
-                ("Alexanderplatz", (52.5219, 13.4132), 0.64),
-                ("Friedrichshain-Kreuzberg (Wahlbezirk 217)", (52.5030, 13.4180), 0.10),
-            ]:
-                Area.objects.create(scope=scope, name=name, score=score, geometry=hexagon(lat, lon, 0.6))
-
-        user, created = User.objects.get_or_create(
-            username="demo", defaults={"first_name": "Camarade", "scope": scope, "is_approved": True}
-        )
-        if created:
-            user.set_password("demo-canvassing")
-            user.save()
-        for admin in User.objects.filter(is_superuser=True, scope__isnull=True):
-            admin.scope = scope
-            admin.save(update_fields=["scope"])
+        # One account per role, plus a sign-up waiting for approval. No password: in development the login
+        # code is printed in the backend logs (make logs SERVICE=backend).
+        for email, first_name, role, approved in [
+            ("militant@demo.test", "Camarade", Role.MILITANT, True),
+            ("aguerri@demo.test", "Alex", Role.EXPERIENCED, True),
+            ("responsable@demo.test", "Sam", Role.MANAGER, True),
+            ("nouveau@demo.test", "Dominique", Role.MILITANT, False),
+        ]:
+            User.objects.get_or_create(
+                email=email,
+                defaults={"first_name": first_name, "organization": organization, "role": role, "is_approved": approved},
+            )
+        for admin in User.objects.filter(is_superuser=True, organization__isnull=True):
+            admin.organization = organization
+            admin.save(update_fields=["organization"])
 
         self.stdout.write(self.style.SUCCESS(
-            f"{count} addresses created in scope '{scope.code}'. Demo login: demo / demo-canvassing"
+            f"{count} addresses created in organization '{organization.code}'. "
+            "Demo logins (code in the backend logs): militant@ / aguerri@ / responsable@ / nouveau@demo.test (pending)"
         ))

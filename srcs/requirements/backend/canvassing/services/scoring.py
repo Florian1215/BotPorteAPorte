@@ -18,7 +18,7 @@ class Criterion:
     key: str
     label: str
     value: Callable[[District], float | None]
-    # True: the higher the value, the better the district (False: the lower, e.g. rent).
+    # True: the higher the value, the better the district (False: the lower).
     higher_is_better: bool = True
 
 
@@ -38,11 +38,11 @@ CRITERIA = [
     Criterion("abstention", "Abstention", lambda d: 1 - d.voters / d.eligible if d.voters is not None and d.eligible else None),
     Criterion("young", "18–29 ans", lambda d: d.share_18_29),
     Criterion("density", "Densité", _density),
-    Criterion("low_rent", "Loyers bas", lambda d: d.rent_m2, higher_is_better=False),
+    Criterion("low_income", "Bas revenus", lambda d: d.low_income),
 ]
 CRITERIA_BY_KEY = {c.key: c for c in CRITERIA}
 
-DEFAULT_WEIGHTS = {"linke": 50, "abstention": 15, "young": 15, "density": 10, "low_rent": 10}
+DEFAULT_WEIGHTS = {"linke": 50, "abstention": 15, "young": 15, "density": 10, "low_income": 10}
 
 
 def weights_of(organization) -> dict[str, int]:

@@ -106,7 +106,7 @@ REST_FRAMEWORK = {
     "UNAUTHENTICATED_USER": "django.contrib.auth.models.AnonymousUser",
     # Per IP, on the login endpoints (code requests / guesses); per-email limits are in accounts.views.
     # Generous: a whole local group may log in at once from the same wifi.
-    "DEFAULT_THROTTLE_RATES": {"login": "120/hour"},
+    "DEFAULT_THROTTLE_RATES": {"login": "120/hour", "telegram_link": "30/hour"},
     # Client IP taken from X-Forwarded-For as set by our nginx (+1 per extra proxy in front of it).
     "NUM_PROXIES": int(env("NUM_PROXIES", "1")),
 }
@@ -149,6 +149,11 @@ PUBLIC_URL = env("PUBLIC_URL").rstrip("/")
 # Email: sent with Brevo's API when CLE_API_BREVO is set, else by SMTP when EMAIL_HOST is set,
 # else printed in the backend logs (development).
 BREVO_API_KEY = env("CLE_API_BREVO")
+
+# Telegram bot (token from @BotFather): lets militant·es link their Telegram account, to get back what they did
+# with the old Telegram bot. Its domain must be set to the site's with BotFather's /setdomain. Blank = disabled.
+TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN")
+TELEGRAM_BOT_ID = int(TELEGRAM_BOT_TOKEN.split(":")[0]) if TELEGRAM_BOT_TOKEN.split(":")[0].isdigit() else None
 EMAIL_HOST = env("EMAIL_HOST")
 if BREVO_API_KEY:
     EMAIL_BACKEND = "accounts.brevo.BrevoEmailBackend"

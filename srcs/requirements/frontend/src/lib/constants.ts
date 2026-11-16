@@ -134,7 +134,7 @@ export const CRITERION_FORMAT: Record<ScoreCriterionKey, (v: number) => string> 
   abstention: pct,
   young: pct,
   density: (v) => `${Math.round(v).toLocaleString("fr")} hab./km²`,
-  low_rent: (v) => `${v.toLocaleString("fr", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €/m²`,
+  low_income: pct,
 };
 
 export const CRITERION_HELP: Record<ScoreCriterionKey, string> = {
@@ -142,5 +142,6 @@ export const CRITERION_HELP: Record<ScoreCriterionKey, string> = {
   abstention: "Inscrit·es qui n'ont pas voté : des électeur·rices à mobiliser.",
   young: "Part des 18–29 ans dans la population (Zensus 2022).",
   density: "Habitant·es par km² : plus de portes à l'heure.",
-  low_rent: "Loyer net moyen au m² (Zensus 2022), indicateur de revenu : plus il est bas, mieux c'est.",
+  low_income:
+    "Part des habitant·es qui vivent des minima sociaux (Bürgergeld / SGB II, SGB XII), d'après le Monitoring Soziale Stadtentwicklung 2023 de Berlin.",
 };

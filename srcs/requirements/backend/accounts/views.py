@@ -15,6 +15,7 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from config.settings import DEBUG
+from . import telegram
 from .emails import send_email_change_code, send_email_changed_notice, send_login_code
 from .models import LoginCode, Organization, User
 from .serializers import (
@@ -178,6 +179,20 @@ class MeView(APIView):
         user.anonymize()
         logout(request)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class TelegramLinkView(APIView):
+    """Link my Telegram account (data signed by Telegram's login popup): my visits made with the bot become mine."""
+
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "telegram_link"
+
+    def post(self, request):
+        try:
+            n = telegram.link(request.user, telegram.verified_id(request.data))
+        except telegram.TelegramLinkError as exc:
+            return error(str(exc), status.HTTP_409_CONFLICT if "déjà lié" in str(exc) else status.HTTP_400_BAD_REQUEST)
+        return Response({**MeSerializer(request.user).data, "linked_visits": n})
 
 
 # --------------------------------------------------------------------------- email change

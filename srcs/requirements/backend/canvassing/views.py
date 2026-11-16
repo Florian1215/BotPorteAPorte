@@ -214,7 +214,7 @@ class ManageDistrictDetailView(DistrictManagerView):
     def get(self, request, pk):
         district = get_object_or_404(District, pk=pk, organization_id=request.user.organization_id)
         progress = district_service.progress(district.organization_id, [district.id]).get(
-            district.id, {"total": 0, "to_visit": 0, "done": 0, "done_pct": 0}
+            district.id, district_service.EMPTY_PROGRESS
         )
         return Response(district_detail(district, progress))
 
@@ -242,11 +242,13 @@ def district_detail(d: District, progress: dict) -> dict:
         "share_65_plus": d.share_65_plus,
         "share_foreign": d.share_foreign,
         "rent_m2": d.rent_m2,
+        "low_income": d.low_income,
         "score_parts": [
             {"key": c.key, "label": c.label, **(d.score_parts.get(c.key) or {"value": None, "rank": None, "weight": 0})}
             for c in scoring.CRITERIA
         ],
         "progress": progress,
+        "ages": district_service.age_pyramid(d),
     }
 
 

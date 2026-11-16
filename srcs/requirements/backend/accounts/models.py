@@ -106,6 +106,8 @@ class User(AbstractUser):
     is_approved = models.BooleanField("compte validé", default=False)
     # Suspended by a responsable (not approved any more, but not a sign-up to validate either).
     suspended_at = models.DateTimeField("suspendu·e le", null=True, blank=True)
+    # Telegram account linked from the settings: the visits made with the old Telegram bot are theirs.
+    telegram_id = models.BigIntegerField("identifiant Telegram", null=True, blank=True, unique=True)
 
     USERNAME_FIELD = "email"
     EMAIL_FIELD = "email"
@@ -173,6 +175,7 @@ class User(AbstractUser):
 
         self.email = f"compte-supprime-{self.pk}@supprime.invalid"
         self.first_name = ""
+        self.telegram_id = None
         self.last_name = ""
         self.set_unusable_password()
         self.is_active = False

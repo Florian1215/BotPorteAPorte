@@ -218,6 +218,7 @@ def save_districts(organization, rows: list[DistrictRow], election: str) -> dict
             [organization.id],
         )
     n_with_census = add_census(organization)
+    add_low_income(organization)
     scoring.rescore_organization(organization)
     return {"n_districts": len(rows), "n_with_census": n_with_census}
 
@@ -260,15 +261,84 @@ def add_census(organization) -> int:
     return n
 
 
+def add_low_income(organization) -> int:
+    """Share of low-income residents of each district, from the `SocialArea`s (e.g. Berlin MSS) it overlaps.
+
+    Population-weighted: each census cell of the district takes the value of the area it lies in, so that a
+    district straddling a poor estate and a park is not diluted by the park. Districts without census cells
+    fall back on the overlapping area of each social area.
+    """
+    from ..models import CensusCell, SocialArea
+
+    table = District._meta.db_table
+    social = SocialArea._meta.db_table
+    with connection.cursor() as cursor:
+        cursor.execute(f"UPDATE {table} SET low_income = NULL WHERE organization_id = %s", [organization.id])
+        cursor.execute(
+            f"""
+            UPDATE {table} AS d SET low_income = a.value
+            FROM (
+                SELECT d.id, SUM(c.population * s.low_income) / NULLIF(SUM(c.population), 0) AS value
+                FROM {table} d
+                JOIN {CensusCell._meta.db_table} c ON ST_Contains(d.geometry, c.point)
+                JOIN {social} s ON s.low_income IS NOT NULL AND ST_Contains(s.geometry, c.point)
+                WHERE d.organization_id = %s
+                GROUP BY d.id
+            ) AS a
+            WHERE d.id = a.id
+            """,
+            [organization.id],
+        )
+        n = cursor.rowcount
+        cursor.execute(
+            f"""
+            UPDATE {table} AS d SET low_income = a.value
+            FROM (
+                SELECT d.id,
+                       SUM(ST_Area(ST_Intersection(d.geometry, s.geometry)) * s.low_income)
+                         / NULLIF(SUM(ST_Area(ST_Intersection(d.geometry, s.geometry))), 0) AS value
+                FROM {table} d
+                JOIN {social} s ON s.low_income IS NOT NULL AND ST_Intersects(d.geometry, s.geometry)
+                WHERE d.organization_id = %s AND d.low_income IS NULL
+                GROUP BY d.id
+            ) AS a
+            WHERE d.id = a.id
+            """,
+            [organization.id],
+        )
+        return n + cursor.rowcount
+
+
 # --------------------------------------------------------------------------- progress
 
 
 def progress(organization_id: int, district_ids: list[int] | None = None) -> dict[int, dict]:
-    """Per district: addresses of the organization inside, still to visit, and doors done (visited at least once)."""
-    from ..models import Address, Status, Visit
+    """Per district, the organization's addresses (= French voters on the list) inside:
+
+    - `total`;
+    - `remaining`: still to do, split into `not_leafleted` (nobody went, or the mailbox was inaccessible) and
+      `leafleted` (a militant came during the current election, nobody answered, a leaflet was left);
+    - `to_visit`: the remaining ones free to be put in a new tour (not in someone's tour right now);
+    - `done` / `done_pct`: people met (or addresses settled: not found, do not contact).
+    """
+    from ..models import AbsentDetail, Address, Election, Status, Visit, VisitResult
 
     table = District._meta.db_table
-    params: list = [Status.TO_VISIT, organization_id]
+    election = Election.current()
+    in_election = "AND v.election_id = %s" if election else ""
+    leafleted = f"""EXISTS (
+        SELECT 1 FROM {Visit._meta.db_table} v
+        WHERE v.address_id = a.id AND v.result = %s AND v.absent_detail <> %s {in_election}
+    )"""
+    params: list = [
+        Status.TO_VISIT,
+        [Status.TO_VISIT, Status.PLANNED],
+        [Status.TO_VISIT, Status.PLANNED],
+        VisitResult.ADDRESS_TO_RETRY,
+        AbsentDetail.MAILBOX_INACCESSIBLE,
+        *([election.id] if election else []),
+        organization_id,
+    ]
     only = ""
     if district_ids is not None:
         only = "AND d.id = ANY(%s)"
@@ -279,7 +349,8 @@ def progress(organization_id: int, district_ids: list[int] | None = None) -> dic
             SELECT d.id,
                    COUNT(a.id),
                    COUNT(a.id) FILTER (WHERE a.status = %s),
-                   COUNT(a.id) FILTER (WHERE EXISTS (SELECT 1 FROM {Visit._meta.db_table} v WHERE v.address_id = a.id))
+                   COUNT(a.id) FILTER (WHERE a.status = ANY(%s)),
+                   COUNT(a.id) FILTER (WHERE a.status = ANY(%s) AND {leafleted})
             FROM {table} d
             JOIN {Address._meta.db_table} a
               ON a.organization_id = d.organization_id AND a.disabled_at IS NULL AND ST_Contains(d.geometry, a.location)
@@ -288,10 +359,59 @@ def progress(organization_id: int, district_ids: list[int] | None = None) -> dic
             """,
             params,
         )
-        return {
-            pk: {"total": total, "to_visit": to_visit, "done": done, "done_pct": round(100 * done / total, 1) if total else 0}
-            for pk, total, to_visit, done in cursor.fetchall()
-        }
+        result = {}
+        for pk, total, to_visit, remaining, n_leafleted in cursor.fetchall():
+            done = total - remaining
+            result[pk] = {
+                "total": total,
+                "to_visit": to_visit,
+                "remaining": remaining,
+                "not_leafleted": remaining - n_leafleted,
+                "leafleted": n_leafleted,
+                "done": done,
+                "done_pct": round(100 * done / total, 1) if total else 0,
+            }
+        return result
+
+
+EMPTY_PROGRESS = {"total": 0, "to_visit": 0, "remaining": 0, "not_leafleted": 0, "leafleted": 0, "done": 0, "done_pct": 0}
+
+# Age groups of the pyramid: (label, min age, max age included).
+AGE_GROUPS = [
+    ("18–24", 18, 24),
+    ("25–34", 25, 34),
+    ("35–44", 35, 44),
+    ("45–54", 45, 54),
+    ("55–64", 55, 64),
+    ("65–74", 65, 74),
+    ("75+", 75, None),
+]
+
+
+def age_pyramid(district: District) -> dict:
+    """Age of the organization's addresses (French voters) in the district, from their year of birth.
+
+    The age is the one reached this year (the list keeps only the year of birth).
+    """
+    from django.db.models import Count
+
+    from ..models import Address
+
+    year = timezone.localdate().year
+    counts = dict(
+        Address.objects.filter(organization_id=district.organization_id, location__within=district.geometry)
+        .values_list("birth_year")
+        .annotate(n=Count("id"))
+        .order_by()
+    )
+    unknown = counts.pop(None, 0)
+    groups = []
+    for label, low, high in AGE_GROUPS:
+        n = sum(c for birth, c in counts.items() if year - birth >= low and (high is None or year - birth <= high))
+        groups.append({"label": label, "count": n})
+    # Under 18 this year (born late in the year, or a typo in the list): with the youngest.
+    groups[0]["count"] += sum(c for birth, c in counts.items() if year - birth < AGE_GROUPS[0][1])
+    return {"groups": groups, "unknown": unknown}
 
 
 # --------------------------------------------------------------------------- custom import

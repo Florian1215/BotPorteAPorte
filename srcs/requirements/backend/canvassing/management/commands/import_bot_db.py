@@ -6,11 +6,13 @@ What is imported, from the bot's `address` table:
 - every address, into the organization of its consulate (BERLIN, WIEN, …). Organizations are found by their city
   or name (Berlin → "Berlin Insoumise", Wien → "Vienne Insoumise"…) and created when missing; `--org` forces one;
 - the result of the last visit of each address (the bot kept no history), as a visit of the election given by
-  `--election` (default: the consular election of May 2026), dated with the bot's `visit_planned_at`.
+  `--election` (default: the consular election of May 2026), dated with the bot's `visit_planned_at`, with the
+  Telegram id of who made it (`visit_planned_by`): it becomes theirs once they link their Telegram account on the
+  site (Mon compte), or right away if they already did.
 
 The file is read as text: it does not need to be restored in PostgreSQL. Addresses already on the site (same
 person at the same address) and duplicates inside the file are only added once. Running the command again
-adds nothing new. The bot's areas (hand-drawn zones) are not imported: zones are now the polling districts.
+adds nothing new (but fills in the Telegram id of visits imported before it was kept). The bot's areas (hand-drawn zones) are not imported: zones are now the polling districts.
 """
 import pathlib
 import re
@@ -22,7 +24,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils.text import slugify
 
-from accounts.models import Organization
+from accounts.models import Organization, User
 from canvassing.models import RESULT_TO_STATUS, AbsentDetail, Address, Election, Status, Visit, VisitResult, address_key
 from canvassing.services.address_import import person_key
 from canvassing.services.elections import RESET_STATUSES
@@ -83,8 +85,8 @@ def read_addresses(path: pathlib.Path):
             yield dict(zip(columns, (decode(f) for f in line.rstrip("\n").split("\t"))))
 
 
-def visit_of(row: dict) -> tuple[str, str, datetime] | None:
-    """(result, detail, date) of the last visit of a bot address, or None if it was never visited."""
+def visit_of(row: dict) -> tuple[str, str, datetime, int | None] | None:
+    """(result, detail, date, Telegram id of who made it) of the last visit of a bot address, or None if never visited."""
     when = row.get("visit_planned_at")
     if not when:
         return None
@@ -98,7 +100,8 @@ def visit_of(row: dict) -> tuple[str, str, datetime] | None:
     date = datetime.fromisoformat(when)
     if date.tzinfo is None:
         date = date.replace(tzinfo=dt_timezone.utc)
-    return result, detail, date
+    by = str(row.get("visit_planned_by") or "").strip()
+    return result, detail, date, int(by) if by.lstrip("-").isdigit() else None
 
 
 def status_after(result: str, election_is_current: bool) -> int:
@@ -203,9 +206,14 @@ class Command(BaseCommand):
         by_person = defaultdict(list)
         for a in existing:
             by_person[person_key(a.name, a.first_names, a.zip_code)].append(a)
-        known_visits = set(
-            Visit.objects.filter(address__organization=organization).values_list("address_id", "result", "created_at")
-        )
+        known_visits = {
+            (address_id, result, created_at): (pk, telegram_user_id)
+            for pk, address_id, result, created_at, telegram_user_id in Visit.objects.filter(
+                address__organization=organization
+            ).values_list("id", "address_id", "result", "created_at", "telegram_user_id")
+        }
+        members = dict(User.objects.filter(telegram_id__isnull=False).values_list("telegram_id", "id"))
+        authors: dict[int, int] = {}  # visit already imported, without its Telegram id → Telegram id
 
         to_create: list[Address] = []
         new_visits: list[tuple[Address, tuple]] = []
@@ -215,7 +223,10 @@ class Command(BaseCommand):
             visit = row["_visit"]
             if match is not None:
                 stats["deja_en_base"] += 1
-                if visit and (match.id, visit[0], visit[2]) not in known_visits:
+                known = known_visits.get((match.id, visit[0], visit[2])) if visit else None
+                if known is not None and known[1] is None and visit[3] is not None:
+                    authors[known[0]] = visit[3]
+                if visit and known is None:
                     new_visits.append((match, visit))
                     # Only fill in an address nobody visited on the site since.
                     if match.status == Status.TO_VISIT:
@@ -250,11 +261,17 @@ class Command(BaseCommand):
         Address.all_objects.bulk_update(to_update, ["status"], batch_size=1000)
         Visit.objects.bulk_create(
             [
-                Visit(address=a, result=v[0], absent_detail=v[1], created_at=v[2], election=election, user=None)
+                Visit(
+                    address=a, result=v[0], absent_detail=v[1], created_at=v[2], election=election,
+                    telegram_user_id=v[3], user_id=members.get(v[3]),
+                )
                 for a, v in new_visits
             ],
             batch_size=1000,
         )
+        for pk, telegram_id in authors.items():
+            Visit.objects.filter(pk=pk).update(telegram_user_id=telegram_id, user_id=members.get(telegram_id))
+        stats["auteurs_completes"] += len(authors)
         stats["visites"] += len(new_visits)
         for _, v in new_visits:
             stats[f"resultat:{v[0]}"] += 1
@@ -289,6 +306,8 @@ class Command(BaseCommand):
         if totals["invalides"]:
             out(f"Lignes invalides (coordonnées manquantes) : {totals['invalides']}")
         out(f"Visites importées : {totals['visites']}")
+        if totals["auteurs_completes"]:
+            out(f"Visites déjà importées dont l'auteur Telegram a été complété : {totals['auteurs_completes']}")
         for key, n in sorted(((k, v) for k, v in totals.items() if k.startswith("resultat:")), key=lambda kv: -kv[1]):
             out(f"   {n} {labels.get(key.split(':', 1)[1], key)} {self.phrase(election)}")
 

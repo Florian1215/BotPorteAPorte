@@ -9,7 +9,12 @@ admin.site.site_title = "Porte-à-porte"
 
 def public_config(request):
     """Runtime settings the frontend needs (no rebuild when they change)."""
-    return JsonResponse({"map": {"tile_url": settings.MAP_TILE_URL, "attribution": settings.MAP_TILE_ATTRIBUTION}})
+    return JsonResponse(
+        {
+            "map": {"tile_url": settings.MAP_TILE_URL, "attribution": settings.MAP_TILE_ATTRIBUTION},
+            "telegram_bot_id": settings.TELEGRAM_BOT_ID,
+        }
+    )
 
 
 urlpatterns = [

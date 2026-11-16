@@ -10,6 +10,7 @@ urlpatterns = [
     path("logout/", views.LogoutView.as_view()),
     path("me/", views.MeView.as_view()),
     path("me/email/", views.EmailChangeRequestView.as_view()),
+    path("me/telegram/", views.TelegramLinkView.as_view()),
     path("me/email/code/", views.EmailChangeCodeView.as_view()),
     path("me/email/link/", views.EmailChangeLinkView.as_view()),
     path("organizations/", views.OrganizationListView.as_view()),

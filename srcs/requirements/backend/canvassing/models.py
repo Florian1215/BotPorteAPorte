@@ -163,6 +163,8 @@ class District(models.Model):
     share_65_plus = models.FloatField(null=True, blank=True)
     share_foreign = models.FloatField(null=True, blank=True)
     rent_m2 = models.FloatField("loyer net moyen (€/m²)", null=True, blank=True)
+    # Share of the residents living on minimum social benefits (from `SocialArea`, weighted by census population).
+    low_income = models.FloatField("part de bas revenus", null=True, blank=True)
 
     score = models.FloatField(default=0, db_index=True)
     score_parts = models.JSONField(default=dict, blank=True)
@@ -216,6 +218,25 @@ class CensusCell(models.Model):
     share_foreign = models.FloatField(null=True)
     rent_m2 = models.FloatField(null=True)
     dwellings = models.IntegerField(null=True)
+
+
+class SocialArea(models.Model):
+    """A neighbourhood with a known share of low-income residents (shared by every organization).
+
+    Berlin: the 542 "Planungsräume" of the Monitoring Soziale Stadtentwicklung (`manage.py load_social_index`).
+    Polling districts do not follow these borders: each district takes the population-weighted mean of the
+    areas its census cells fall in.
+    """
+
+    source = models.CharField(max_length=32)
+    code = models.CharField(max_length=32)
+    name = models.CharField(max_length=255)
+    geometry = models.MultiPolygonField(srid=4326)
+    population = models.IntegerField(null=True)
+    low_income = models.FloatField(null=True)  # 0–1; None: not published (too few residents)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["source", "code"], name="social_area_unique_code")]
 
 
 class Tour(models.Model):
@@ -299,6 +320,8 @@ class Visit(models.Model):
     result = models.CharField(max_length=32, choices=VisitResult.choices)
     absent_detail = models.CharField(max_length=32, choices=AbsentDetail.choices, blank=True, default="")
     election = models.ForeignKey(Election, null=True, blank=True, on_delete=models.SET_NULL, related_name="visits")
+    # Visits imported from the Telegram bot: who made it there. Given to the member who links that Telegram account.
+    telegram_user_id = models.BigIntegerField(null=True, blank=True, db_index=True)
     # Not auto_now_add: visits imported from the Telegram bot keep their date.
     created_at = models.DateTimeField(default=timezone.now)
 

@@ -35,6 +35,8 @@ export type User = {
   can_manage_organization: boolean;
   is_site_admin: boolean;
   organization: Organization | null;
+  /** Telegram account linked from "Mon compte" (visits made with the old bot are then this user's). */
+  telegram_id: number | null;
 };
 
 export type Member = {
@@ -135,7 +137,7 @@ export type District = {
 /** Best districts to canvass, for prepared tours (militant·es). */
 export type Area = District & { n_to_visit: number; done_pct: number };
 
-export type ScoreCriterionKey = "linke" | "abstention" | "young" | "density" | "low_rent";
+export type ScoreCriterionKey = "linke" | "abstention" | "young" | "density" | "low_income";
 export type ScoreWeights = Record<ScoreCriterionKey, number>;
 
 export type DistrictImport = {
@@ -181,8 +183,25 @@ export type DistrictDetail = District & {
   share_65_plus: number | null;
   share_foreign: number | null;
   rent_m2: number | null;
+  /** Share (0–1) of residents living on minimum social benefits (Berlin MSS), null without data. */
+  low_income: number | null;
   score_parts: { key: ScoreCriterionKey; label: string; value: number | null; rank: number | null; weight: number }[];
-  progress: { total: number; to_visit: number; done: number; done_pct: number };
+  progress: DistrictProgress;
+  /** Age of the French voters of the list living in the district (year of birth). */
+  ages: { groups: { label: string; count: number }[]; unknown: number };
+};
+
+/** The organization's addresses (French voters on the list) in a district. */
+export type DistrictProgress = {
+  total: number;
+  /** Still to do: nobody went yet (or mailbox inaccessible) + leaflet left but nobody met. */
+  remaining: number;
+  not_leafleted: number;
+  leafleted: number;
+  /** Remaining ones not in someone's tour right now (can go in a new tour). */
+  to_visit: number;
+  done: number;
+  done_pct: number;
 };
 
 export type ImportInspection = {

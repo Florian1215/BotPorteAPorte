@@ -1,5 +1,6 @@
 import { Check, ChevronDown, Crown, Mail, PauseCircle, PlayCircle, Search, Settings2, Shield, ShieldCheck, User, UserPlus, Users, X, type LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 import { Link, useParams } from "react-router-dom";
 
 import { api, errorMessage } from "../api/client";
@@ -199,29 +200,38 @@ function MemberRow({ member, isMe, myRole, onChange }: { member: Member; isMe: b
   const [error, setError] = useState<string | null>(null);
   const menu = useRef<HTMLDivElement>(null);
   const popup = useRef<HTMLDivElement>(null);
-  const [upward, setUpward] = useState(false);
+  // Rendered in a portal (fixed position) so the sheet's scroll area can't clip it.
+  const [pos, setPos] = useState<{ right: number; top?: number; bottom?: number } | null>(null);
   const editable = !isMe && RANK[member.role] <= RANK[myRole];
   const suspended = !member.is_approved && member.suspended_at !== null;
 
-  // Near the bottom of the list, open the menu above the label so it is reachable without scrolling.
+  // Open below the label, or above it when there isn't enough room below in the viewport.
   useLayoutEffect(() => {
-    if (!open || !menu.current || !popup.current) return;
-    const scroller = menu.current.closest(".overflow-y-auto") ?? document.documentElement;
-    const area = scroller.getBoundingClientRect();
-    const anchor = menu.current.getBoundingClientRect();
-    const height = popup.current.offsetHeight + 8;
-    const below = area.bottom - anchor.bottom;
-    const above = anchor.top - area.top;
-    setUpward(below < height && above > below);
-  }, [open, confirmSuspend]);
+    if (!open) return setPos(null);
+    const place = () => {
+      if (!menu.current) return;
+      const anchor = menu.current.getBoundingClientRect();
+      const height = (popup.current?.offsetHeight ?? 0) + 8;
+      const below = window.innerHeight - anchor.bottom;
+      const right = Math.max(8, window.innerWidth - anchor.right);
+      setPos(below < height && anchor.top > below ? { right, bottom: window.innerHeight - anchor.top + 6 } : { right, top: anchor.bottom + 6 });
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open, confirmSuspend, error]);
 
   useEffect(() => {
     if (!open) return;
     const close = (e: PointerEvent) => {
-      if (menu.current && !menu.current.contains(e.target as Node)) {
-        setOpen(false);
-        setConfirmSuspend(false);
-      }
+      const target = e.target as Node;
+      if (menu.current?.contains(target) || popup.current?.contains(target)) return;
+      setOpen(false);
+      setConfirmSuspend(false);
     };
     document.addEventListener("pointerdown", close);
     return () => document.removeEventListener("pointerdown", close);
@@ -281,13 +291,13 @@ function MemberRow({ member, isMe, myRole, onChange }: { member: Member; isMe: b
           <RoleBadge role={member.role} />
         )}
 
-        {open && (
+        {open &&
+          createPortal(
           <div
             ref={popup}
             role="menu"
-            className={`absolute right-0 z-20 w-64 rounded-2xl bg-white p-1.5 shadow-float ring-1 ring-zinc-950/10 ${
-              upward ? "bottom-full mb-1.5" : "top-full mt-1.5"
-            }`}
+            style={{ ...pos, visibility: pos ? "visible" : "hidden" }}
+            className="fixed z-[1150] w-64 rounded-2xl bg-white p-1.5 shadow-float ring-1 ring-zinc-950/10"
           >
             {error && <p className="px-2.5 py-1.5 text-xs text-red-600">{error}</p>}
             {ROLES.filter((r) => RANK[r.value] <= RANK[myRole]).map((r) => {
@@ -335,7 +345,8 @@ function MemberRow({ member, isMe, myRole, onChange }: { member: Member; isMe: b
                 <PauseCircle className="size-4" /> Suspendre l'accès
               </button>
             )}
-          </div>
+          </div>,
+          document.body,
         )}
       </div>
     </div>

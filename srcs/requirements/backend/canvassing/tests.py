@@ -27,18 +27,25 @@ class ScoringTests(SimpleTestCase):
     def test_score_is_weighted_mean_of_ranks_and_skips_missing_data(self):
         a = District(id=1, linke=10, valid=100, voters=50, eligible=100, rent_m2=None)
         b = District(id=2, linke=40, valid=100, voters=80, eligible=100, rent_m2=None)
-        scoring.compute_scores([a, b], {"linke": 50, "abstention": 50, "young": 0, "density": 0, "low_rent": 30})
-        # b: best Linke vote (rank 1) but least abstention (rank 0); rent is missing everywhere → ignored.
+        scoring.compute_scores([a, b], {"linke": 50, "abstention": 50, "young": 0, "density": 0, "low_income": 30})
+        # b: best Linke vote (rank 1) but least abstention (rank 0); income is missing everywhere → ignored.
         self.assertEqual(a.score, 50)
         self.assertEqual(b.score, 50)
-        scoring.compute_scores([a, b], {"linke": 100, "abstention": 0, "young": 0, "density": 0, "low_rent": 0})
+        scoring.compute_scores([a, b], {"linke": 100, "abstention": 0, "young": 0, "density": 0, "low_income": 0})
         self.assertEqual((a.score, b.score), (0, 100))
-        self.assertIsNone(a.score_parts["low_rent"]["rank"])
+        self.assertIsNone(a.score_parts["low_income"]["rank"])
 
-    def test_low_rent_is_better(self):
-        a, b = District(id=1, rent_m2=6), District(id=2, rent_m2=12)
-        scoring.compute_scores([a, b], {"low_rent": 10})
+    def test_more_low_income_is_better(self):
+        a, b = District(id=1, low_income=0.25), District(id=2, low_income=0.05)
+        scoring.compute_scores([a, b], {"low_income": 10})
         self.assertGreater(a.score, b.score)
+
+    def test_mss_low_income_share(self):
+        from canvassing.management.commands.load_social_index import WORKING_AGE_SHARE, low_income_share
+
+        self.assertAlmostEqual(low_income_share({"kom": "gültig", "s1": 5, "s3": 10}), (10 + WORKING_AGE_SHARE * 5) / 100)
+        self.assertIsNone(low_income_share({"kom": "ungültig (EW unter 300)", "s1": 5, "s3": 10}))
+        self.assertIsNone(low_income_share({"kom": "gültig", "s1": -9999, "s3": 10}))
 
     def test_clean_weights(self):
         self.assertEqual(scoring.clean_weights({"linke": "150", "young": -3})["linke"], 100)
@@ -230,6 +237,68 @@ class LecImportTests(TestCase):
         self.assertFalse(Address.objects.filter(organization=self.organization).exists())
 
 
+class DistrictInfoTests(TestCase):
+    """Progress of a district (what is left to do) and age pyramid of the French voters inside."""
+
+    def setUp(self):
+        from django.contrib.gis.geos import Point
+
+        from accounts.models import User
+        from canvassing.models import Address, Election, SocialArea, Status, Visit, VisitResult
+
+        self.organization = Organization.objects.create(code="info", name="Info")
+        self.district = District.objects.create(
+            organization=self.organization, code="1", name="Nord", geometry=MultiPolygon(square(0, 0), srid=4326)
+        )
+        election = Election.current() or Election.objects.create(name="Élection test", is_current=True)
+        old = Election.objects.create(name="Ancienne élection")
+        user = User.objects.create_user(email="v@demo.test", organization=self.organization, is_approved=True)
+        year = __import__("datetime").date.today().year
+
+        def person(name, status=Status.TO_VISIT, age=None, x=0.005):
+            return Address.objects.create(
+                organization=self.organization, name=name, address="1 rue", zip_code="10115", city="Berlin",
+                location=Point(x, 0.005, srid=4326), status=status, birth_year=year - age if age else None,
+            )
+
+        person("JAMAIS", age=20)
+        leaflet = person("BOITE", age=30)
+        Visit.objects.create(address=leaflet, user=user, result=VisitResult.ADDRESS_TO_RETRY, absent_detail="leaflet", election=election)
+        closed = person("FERMEE", age=30)
+        Visit.objects.create(address=closed, user=user, result=VisitResult.ADDRESS_TO_RETRY, absent_detail="mailbox_inaccessible", election=election)
+        before = person("AVANT", age=80)  # left a leaflet during a past election only: not leafleted for this one
+        Visit.objects.create(address=before, user=user, result=VisitResult.ADDRESS_TO_RETRY, absent_detail="leaflet", election=old)
+        person("EN_TOURNEE", Status.PLANNED, age=50)
+        person("PROMESSE", Status.COMMITMENT_TO_VOTE, age=17)
+        person("REFUS", Status.DO_NOT_CONTACT)
+        person("AILLEURS", x=5)  # outside the district
+
+        SocialArea.objects.create(source="t", code="a", name="A", geometry=MultiPolygon(square(0, 0, 0.005), srid=4326), low_income=0.3)
+        SocialArea.objects.create(source="t", code="b", name="B", geometry=MultiPolygon(square(0.005, 0, 0.005), srid=4326), low_income=0.1)
+
+    def test_progress(self):
+        p = ds.progress(self.organization.id)[self.district.id]
+        self.assertEqual(
+            p,
+            {"total": 7, "to_visit": 4, "remaining": 5, "not_leafleted": 4, "leafleted": 1, "done": 2, "done_pct": 28.6},
+        )
+
+    def test_age_pyramid(self):
+        ages = ds.age_pyramid(self.district)
+        counts = {g["label"]: g["count"] for g in ages["groups"]}
+        self.assertEqual(counts["18–24"], 2)  # 20 years old, and 17 counted with the youngest
+        self.assertEqual(counts["25–34"], 2)
+        self.assertEqual(counts["45–54"], 1)
+        self.assertEqual(counts["75+"], 1)
+        self.assertEqual(ages["unknown"], 1)
+
+    def test_low_income_without_census_uses_overlapping_area(self):
+        self.assertEqual(ds.add_low_income(self.organization), 1)
+        self.district.refresh_from_db()
+        # Only the lower-left quarter of each area overlaps the district... both equally: mean of 0.3 and 0.1.
+        self.assertAlmostEqual(self.district.low_income, 0.2, places=3)
+
+
 class ActiveTourTests(TestCase):
     def test_preparing_a_tour_while_one_is_active_returns_its_id(self):
         from django.contrib.gis.geos import Point
@@ -307,6 +376,52 @@ class BotImportTests(TestCase):
         self.assertIn("Nouvelles adresses : 0", again)
         self.assertEqual(Address.all_objects.count(), 3)
         self.assertEqual(Visit.objects.count(), 2)
+
+    def test_telegram_author_is_kept_and_linking_gives_the_visits(self):
+        import hashlib
+        import hmac
+        import time
+
+        from django.test import Client, override_settings
+
+        from accounts.models import User
+
+        self.run_import()
+        martin = Visit.objects.get(address__name="MARTIN")
+        self.assertEqual((martin.telegram_user_id, martin.user), (123, None))
+
+        # Visits imported before the Telegram id was kept: a new run fills it in, without duplicating them.
+        Visit.objects.update(telegram_user_id=None)
+        self.assertIn("auteur Telegram a été complété : 2", self.run_import())
+        self.assertEqual(Visit.objects.count(), 2)
+        self.assertEqual(Visit.objects.get(address__name="MARTIN").telegram_user_id, 123)
+
+        token = "4242:secret"
+        user = User.objects.create_user(email="t@demo.test", organization=self.berlin, is_approved=True)
+        client = Client()
+        client.force_login(user)
+
+        def signed(telegram_id, auth_date=None):
+            data = {"id": telegram_id, "first_name": "Camille", "auth_date": int(auth_date or time.time())}
+            check = "\n".join(f"{k}={data[k]}" for k in sorted(data))
+            data["hash"] = hmac.new(hashlib.sha256(token.encode()).digest(), check.encode(), hashlib.sha256).hexdigest()
+            return data
+
+        with override_settings(TELEGRAM_BOT_TOKEN=token):
+            forged = {**signed(123), "id": 124}
+            self.assertEqual(client.post("/api/auth/me/telegram/", forged, content_type="application/json").status_code, 400)
+            old = signed(123, auth_date=time.time() - 2 * 24 * 3600)
+            self.assertEqual(client.post("/api/auth/me/telegram/", old, content_type="application/json").status_code, 400)
+
+            response = client.post("/api/auth/me/telegram/", signed(123), content_type="application/json")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual((response.json()["telegram_id"], response.json()["linked_visits"]), (123, 1))
+            self.assertEqual(Visit.objects.get(address__name="MARTIN").user, user)
+            # Once linked, no second link; and nobody else can take that Telegram account.
+            self.assertEqual(client.post("/api/auth/me/telegram/", signed(124), content_type="application/json").status_code, 409)
+            other = User.objects.create_user(email="o@demo.test", organization=self.berlin, is_approved=True)
+            client.force_login(other)
+            self.assertEqual(client.post("/api/auth/me/telegram/", signed(123), content_type="application/json").status_code, 409)
 
     def test_dry_run_changes_nothing(self):
         self.assertIn("SIMULATION", self.run_import("--dry-run"))

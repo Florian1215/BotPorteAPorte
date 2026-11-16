@@ -8,6 +8,7 @@ import { useNavigate } from "react-router-dom";
 import { api, errorMessage } from "../api/client";
 import type {
   DistrictDetail,
+  DistrictProgress,
   DistrictImport,
   DistrictMap,
   ImportInspection,
@@ -358,11 +359,19 @@ function DistrictSheet({ id }: { id: number }) {
           <p className="font-semibold tracking-tight">Score {Math.round(d.score)} / 100</p>
           <p className="text-sm text-zinc-500 tabular-nums">
             {p.total > 0
-              ? `${p.done} porte${p.done > 1 ? "s" : ""} faite${p.done > 1 ? "s" : ""} sur ${p.total} (${formatPct(p.done_pct, 0)})`
+              ? `${p.total.toLocaleString("fr")} Français·e${p.total > 1 ? "s" : ""} · ${formatPct(p.done_pct, 0)} fait`
               : "Aucune adresse de la liste dans ce bureau"}
           </p>
         </div>
       </div>
+
+      {p.total > 0 && (
+        <>
+          <SectionTitle>Français·es de la zone</SectionTitle>
+          <ProgressCard progress={p} />
+          <AgePyramid ages={d.ages} />
+        </>
+      )}
 
       <SectionTitle>Détail du score</SectionTitle>
       <Card className="divide-y divide-zinc-950/[0.06]">
@@ -425,10 +434,83 @@ function DistrictSheet({ id }: { id: number }) {
           <Metric label="18–29 ans" value={formatPct(d.share_18_29 != null ? d.share_18_29 * 100 : null)} />
           <Metric label="65 ans et plus" value={formatPct(d.share_65_plus != null ? d.share_65_plus * 100 : null)} />
           <Metric label="Étranger·es" value={formatPct(d.share_foreign != null ? d.share_foreign * 100 : null)} />
-          <Metric label="Loyer net moyen" value={d.rent_m2 != null ? CRITERION_FORMAT.low_rent(d.rent_m2) : "—"} />
+          <Metric
+            label="Loyer net moyen"
+            value={d.rent_m2 != null ? `${d.rent_m2.toLocaleString("fr", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €/m²` : "—"}
+          />
         </div>
       )}
+      <div className="grid grid-cols-2 gap-2">
+        <Metric label="Bas revenus (minima sociaux)" value={formatPct(d.low_income != null ? d.low_income * 100 : null)} />
+      </div>
     </Sheet>
+  );
+}
+
+/** What is left to do among the French voters of the district, as numbers and as one stacked bar. */
+function ProgressCard({ progress: p }: { progress: DistrictProgress }) {
+  const n = (v: number) => v.toLocaleString("fr");
+  const segments = [
+    { key: "done", value: p.done, className: "bg-brand-600", label: "fait (personne vue, ou adresse réglée)" },
+    { key: "leafleted", value: p.leafleted, className: "bg-brand-200", label: "boîté, personne pas vue" },
+    { key: "not_leafleted", value: p.not_leafleted, className: "bg-zinc-200", label: "pas encore boîté" },
+  ];
+  return (
+    <Card className="space-y-3 p-3.5">
+      <div className="grid grid-cols-3 gap-2 text-center">
+        <div>
+          <p className="text-xl font-semibold tracking-tight tabular-nums">{n(p.total)}</p>
+          <p className="text-xs text-zinc-500">Français·es</p>
+        </div>
+        <div>
+          <p className="text-xl font-semibold tracking-tight tabular-nums">{n(p.remaining)}</p>
+          <p className="text-xs text-zinc-500">restant à faire</p>
+        </div>
+        <div>
+          <p className="text-xl font-semibold tracking-tight text-brand-700 tabular-nums">{formatPct(p.done_pct, 0)}</p>
+          <p className="text-xs text-zinc-500">déjà fait</p>
+        </div>
+      </div>
+      <div className="flex h-2.5 overflow-hidden rounded-full bg-zinc-100">
+        {segments.map((seg) => seg.value > 0 && <div key={seg.key} className={seg.className} style={{ width: `${(100 * seg.value) / p.total}%` }} />)}
+      </div>
+      <ul className="space-y-1 text-sm">
+        {segments.map((seg) => (
+          <li key={seg.key} className="flex items-center gap-2">
+            <span className={`size-2.5 shrink-0 rounded-full ${seg.className}`} />
+            <span className="w-10 shrink-0 text-right font-semibold tabular-nums">{n(seg.value)}</span>
+            <span className="text-zinc-600">{seg.label}</span>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+/** Age of the French voters of the district: oldest on top, bars centred like a pyramid. */
+function AgePyramid({ ages }: { ages: DistrictDetail["ages"] }) {
+  const known = ages.groups.reduce((sum, g) => sum + g.count, 0);
+  const max = Math.max(1, ...ages.groups.map((g) => g.count));
+  return (
+    <Card className="space-y-1 p-3.5">
+      <p className="pb-1 text-sm font-semibold">Pyramide des âges</p>
+      {known === 0 ? (
+        <p className="text-sm text-zinc-500">Année de naissance inconnue pour ces personnes.</p>
+      ) : (
+        [...ages.groups].reverse().map((g) => (
+          <div key={g.label} className="flex items-center gap-2 text-xs">
+            <span className="w-11 shrink-0 text-zinc-500 tabular-nums">{g.label}</span>
+            <div className="flex h-4 flex-1 justify-center">
+              <div className="h-full rounded bg-brand-600/80" style={{ width: `${(100 * g.count) / max}%`, minWidth: g.count ? 3 : 0 }} />
+            </div>
+            <span className="w-16 shrink-0 text-right tabular-nums text-zinc-700">
+              {g.count} <span className="text-zinc-400">· {Math.round((100 * g.count) / known)} %</span>
+            </span>
+          </div>
+        ))
+      )}
+      {ages.unknown > 0 && known > 0 && <p className="pt-1 text-[11px] text-zinc-500">{ages.unknown} sans année de naissance</p>}
+    </Card>
   );
 }
 

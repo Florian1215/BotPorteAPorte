@@ -74,7 +74,9 @@ class MeSerializer(serializers.ModelSerializer):
             "can_manage_organization",
             "is_site_admin",
             "organization",
+            "telegram_id",
         ]
+        read_only_fields = ["telegram_id"]
 
 
 class ProfileSerializer(serializers.ModelSerializer):

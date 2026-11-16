@@ -52,7 +52,7 @@ exec		:
 			$(COMPOSE) $(FLAGS) $@ $(SERVICE) $(DSHELL)
 
 ################################################### DJANGO HELPERS #####################################################
-.PHONY: migrate makemigrations superuser shell seed import load-zensus
+.PHONY: migrate makemigrations superuser shell seed import load-zensus load-social
 migrate		:
 			$(MANAGE) migrate
 makemigrations:
@@ -71,6 +71,9 @@ import		:
 # make load-zensus BBOX=13.08,52.33,13.77,52.68   (Berlin)
 load-zensus:
 			$(MANAGE) load_zensus $(if $(BBOX),--bbox $(BBOX))
+# Share of low-income residents per neighbourhood (Berlin MSS 2023), after load-zensus.
+load-social:
+			$(MANAGE) load_social_index
 
 ####################################################### CLEANING #######################################################
 .PHONY: clean

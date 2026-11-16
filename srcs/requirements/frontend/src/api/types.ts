@@ -157,10 +157,10 @@ export type DistrictImport = {
   finished_at: string | null;
 };
 
-/** Elections of the site, to choose whose progress the zones show (current one by default). */
+/** The zones' progress (% done) is the one of the current election, set by the site admins. */
 export type ProgressElections = {
-  elections: { id: number; name: string; is_current: boolean }[];
-  progress_election: number | null;
+  /** Name of that election, null when none is current. */
+  progress_election: string | null;
 };
 
 export type DistrictMap = ProgressElections & {

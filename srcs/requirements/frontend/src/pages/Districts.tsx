@@ -42,19 +42,17 @@ export default function Districts() {
   const [panel, setPanel] = useState<"overview" | "weights" | "import">("overview");
   // Bumped when leaving a district: the map zooms back out on all the zones.
   const [overviewCount, setOverviewCount] = useState(0);
-  // Election whose progress (% done) is shown; null: the current one.
-  const [electionId, setElectionId] = useState<number | null>(null);
   const [colorBy, setColorBy] = useState<ColorBy>("score");
   const [topOnly, setTopOnly] = useState(false);
 
   const load = useCallback(() => {
-    api<DistrictMap>("/manage/districts/", { query: electionId ? { election: electionId } : undefined })
+    api<DistrictMap>("/manage/districts/")
       .then((d) => {
         setData(d);
         setError(null);
       })
       .catch((e) => setError(errorMessage(e)));
-  }, [electionId]);
+  }, []);
   useEffect(load, [load]);
 
   // While an import runs, poll its status, then reload the map.
@@ -104,7 +102,7 @@ export default function Districts() {
           setOverviewCount((n) => n + 1);
         }}
       >
-        <DistrictSheet id={selectedId} electionId={electionId} />
+        <DistrictSheet id={selectedId} />
       </BackContext.Provider>
     );
   } else if (empty || panel === "import" || running) {
@@ -125,7 +123,6 @@ export default function Districts() {
         data={data}
         onSelect={setSelectedId}
         onPanel={setPanel}
-        onElection={setElectionId}
         colorBy={colorBy}
         onColorBy={setColorBy}
         topOnly={topOnly}
@@ -311,7 +308,6 @@ function OverviewSheet({
   data,
   onSelect,
   onPanel,
-  onElection,
   colorBy,
   onColorBy,
   topOnly,
@@ -320,7 +316,6 @@ function OverviewSheet({
   data: DistrictMap;
   onSelect: (id: number) => void;
   onPanel: (p: "weights" | "import") => void;
-  onElection: (id: number | null) => void;
   colorBy: ColorBy;
   onColorBy: (c: ColorBy) => void;
   topOnly: boolean;
@@ -364,25 +359,6 @@ function OverviewSheet({
         </Button>
       </div>
 
-      {data.elections.length > 0 && (
-        <Field label="Portes faites pendant">
-          <select
-            className={inputClass}
-            value={data.progress_election ?? ""}
-            onChange={(e) => {
-              const election = data.elections.find((x) => x.id === Number(e.target.value));
-              onElection(!election || election.is_current ? null : election.id);
-            }}
-          >
-            {data.elections.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.name}
-                {e.is_current ? " (en cours)" : ""}
-              </option>
-            ))}
-          </select>
-        </Field>
-      )}
 
       <SectionTitle>Meilleurs scores</SectionTitle>
       <div className="space-y-2">
@@ -420,7 +396,7 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function DistrictSheet({ id, electionId }: { id: number; electionId: number | null }) {
+function DistrictSheet({ id }: { id: number }) {
   const navigate = useNavigate();
   const [detail, setDetail] = useState<DistrictDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -428,10 +404,10 @@ function DistrictSheet({ id, electionId }: { id: number; electionId: number | nu
   useEffect(() => {
     setDetail(null);
     setError(null);
-    api<DistrictDetail>(`/manage/districts/${id}/`, { query: electionId ? { election: electionId } : undefined })
+    api<DistrictDetail>(`/manage/districts/${id}/`)
       .then(setDetail)
       .catch((e) => setError(errorMessage(e)));
-  }, [id, electionId]);
+  }, [id]);
 
   if (!detail)
     return (
@@ -442,7 +418,6 @@ function DistrictSheet({ id, electionId }: { id: number; electionId: number | nu
 
   const d = detail;
   const p = d.progress;
-  const progressElection = d.elections.find((e) => e.id === d.progress_election);
   const totalWeight = d.score_parts.reduce((sum, part) => sum + (part.rank != null ? part.weight : 0), 0);
   const maxPartyPct = Math.max(1, ...d.parties.map((x) => x.pct ?? 0));
 
@@ -478,7 +453,7 @@ function DistrictSheet({ id, electionId }: { id: number; electionId: number | nu
         <>
           <SectionTitle>
             Français·es de la zone
-            {progressElection && <span className="font-normal"> · {progressElection.name}</span>}
+            {d.progress_election && <span className="font-normal"> · {d.progress_election}</span>}
           </SectionTitle>
           <ProgressCard progress={p} />
           <AgePyramid ages={d.ages} />

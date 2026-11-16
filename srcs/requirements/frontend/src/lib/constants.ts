@@ -126,6 +126,23 @@ export function scoreColor(score: number): string {
   return (SCORE_CLASSES.find((c) => score >= c.min) ?? SCORE_CLASSES[SCORE_CLASSES.length - 1]).color;
 }
 
+/** Colour of a district by its share of doors done: light at 0 %, plain red at 50 %, almost black at 100 %. */
+export const DONE_STOPS: { pct: number; color: string }[] = [
+  { pct: 0, color: "#fee2e2" },
+  { pct: 50, color: "#ef4444" },
+  { pct: 100, color: "#2a0505" },
+];
+
+export function doneColor(donePct: number): string {
+  const v = Math.max(0, Math.min(100, donePct));
+  const i = v <= DONE_STOPS[1].pct ? 0 : 1;
+  const [a, b] = [DONE_STOPS[i], DONE_STOPS[i + 1]];
+  const t = (v - a.pct) / (b.pct - a.pct);
+  const channel = (hex: string, k: number) => parseInt(hex.slice(1 + 2 * k, 3 + 2 * k), 16);
+  const mix = [0, 1, 2].map((k) => Math.round(channel(a.color, k) + (channel(b.color, k) - channel(a.color, k)) * t));
+  return `rgb(${mix.join(",")})`;
+}
+
 const pct = (v: number) => `${(v * 100).toLocaleString("fr", { maximumFractionDigits: 1 })} %`;
 
 /** How the raw value of each score criterion is shown. */

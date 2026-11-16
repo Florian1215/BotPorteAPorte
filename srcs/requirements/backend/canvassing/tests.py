@@ -252,6 +252,8 @@ class DistrictInfoTests(TestCase):
         )
         election = Election.current() or Election.objects.create(name="Élection test", is_current=True)
         old = Election.objects.create(name="Ancienne élection")
+        Election.objects.filter(pk=old.pk).update(created_at="2020-01-01T00:00:00Z")
+        self.election, self.old = election, old
         user = User.objects.create_user(email="v@demo.test", organization=self.organization, is_approved=True)
         year = __import__("datetime").date.today().year
 
@@ -269,19 +271,33 @@ class DistrictInfoTests(TestCase):
         before = person("AVANT", age=80)  # left a leaflet during a past election only: not leafleted for this one
         Visit.objects.create(address=before, user=user, result=VisitResult.ADDRESS_TO_RETRY, absent_detail="leaflet", election=old)
         person("EN_TOURNEE", Status.PLANNED, age=50)
-        person("PROMESSE", Status.COMMITMENT_TO_VOTE, age=17)
-        person("REFUS", Status.DO_NOT_CONTACT)
+        promise = person("PROMESSE", Status.COMMITMENT_TO_VOTE, age=17)
+        Visit.objects.create(address=promise, user=user, result=VisitResult.COMMITMENT_TO_VOTE, election=election)
+        refusal = person("REFUS", Status.DO_NOT_CONTACT)  # during the old election: out of the later ones
+        Visit.objects.create(address=refusal, user=user, result=VisitResult.DO_NOT_CONTACT, election=old)
         person("AILLEURS", x=5)  # outside the district
 
         SocialArea.objects.create(source="t", code="a", name="A", geometry=MultiPolygon(square(0, 0, 0.005), srid=4326), low_income=0.3)
         SocialArea.objects.create(source="t", code="b", name="B", geometry=MultiPolygon(square(0.005, 0, 0.005), srid=4326), low_income=0.1)
 
-    def test_progress(self):
+    def test_progress_of_the_current_election(self):
         p = ds.progress(self.organization.id)[self.district.id]
         self.assertEqual(
             p,
-            {"total": 7, "to_visit": 4, "remaining": 5, "not_leafleted": 4, "leafleted": 1, "done": 2, "done_pct": 28.6},
+            {"total": 6, "to_visit": 4, "remaining": 5, "not_leafleted": 4, "leafleted": 1, "done": 1, "done_pct": 16.7},
         )
+
+    def test_progress_of_an_old_election(self):
+        p = ds.progress(self.organization.id, election=self.old)[self.district.id]
+        self.assertEqual((p["total"], p["done"], p["leafleted"], p["done_pct"]), (7, 1, 1, 14.3))
+
+    def test_a_new_election_starts_at_zero(self):
+        from canvassing.models import Election
+
+        new = Election.objects.create(name="Nouvelle élection")
+        p = ds.progress(self.organization.id, election=new)[self.district.id]
+        # The refusal of the old election stays out; the promise of the previous one must be asked again.
+        self.assertEqual((p["total"], p["done"], p["leafleted"], p["done_pct"]), (6, 0, 0, 0))
 
     def test_age_pyramid(self):
         ages = ds.age_pyramid(self.district)

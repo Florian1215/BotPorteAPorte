@@ -157,7 +157,14 @@ export type DistrictImport = {
   finished_at: string | null;
 };
 
-export type DistrictMap = {
+/** Elections of the site, to choose whose progress the zones show (current one by default). */
+export type ProgressElections = {
+  elections: { id: number; name: string; is_current: boolean }[];
+  progress_election: number | null;
+};
+
+export type DistrictMap = ProgressElections & {
+  /** Reference election of the score (votes), not the canvassing campaign. */
   election: string;
   districts: (District & { done_pct: number })[];
   weights: ScoreWeights;
@@ -166,7 +173,7 @@ export type DistrictMap = {
   presets: { key: string; label: string; description: string }[];
 };
 
-export type DistrictDetail = District & {
+export type DistrictDetail = District & ProgressElections & {
   done_pct: number;
   election: string;
   eligible: number | null;

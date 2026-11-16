@@ -17,10 +17,15 @@ import type {
 } from "../api/types";
 import { FitBounds, FlyTo, MapLayers } from "../components/map";
 import { BackContext } from "../context/BackContext";
-import { Alert, Button, Card, EmptyState, Field, Loading, SectionTitle, Sheet, Spinner, inputClass } from "../components/ui";
-import { CRITERION_FORMAT, CRITERION_HELP, SCORE_CLASSES, scoreColor } from "../lib/constants";
+import { Alert, Button, Card, EmptyState, Field, Loading, SectionTitle, Segmented, Sheet, Spinner, inputClass } from "../components/ui";
+import { CRITERION_FORMAT, CRITERION_HELP, DONE_STOPS, SCORE_CLASSES, doneColor, scoreColor } from "../lib/constants";
 
 type MapDistrict = DistrictMap["districts"][number];
+/** What the colour of the districts tells: their score, or the share of doors done. */
+type ColorBy = "score" | "done";
+
+/** "50 meilleures": only the best districts by score, on the map and in the count. */
+const TOP_N = 50;
 
 /** Labels (score · % doors done) only from this zoom on: below, the colours alone tell the story. */
 const LABEL_MIN_ZOOM = 14;
@@ -37,15 +42,19 @@ export default function Districts() {
   const [panel, setPanel] = useState<"overview" | "weights" | "import">("overview");
   // Bumped when leaving a district: the map zooms back out on all the zones.
   const [overviewCount, setOverviewCount] = useState(0);
+  // Election whose progress (% done) is shown; null: the current one.
+  const [electionId, setElectionId] = useState<number | null>(null);
+  const [colorBy, setColorBy] = useState<ColorBy>("score");
+  const [topOnly, setTopOnly] = useState(false);
 
   const load = useCallback(() => {
-    api<DistrictMap>("/manage/districts/")
+    api<DistrictMap>("/manage/districts/", { query: electionId ? { election: electionId } : undefined })
       .then((d) => {
         setData(d);
         setError(null);
       })
       .catch((e) => setError(errorMessage(e)));
-  }, []);
+  }, [electionId]);
   useEffect(load, [load]);
 
   // While an import runs, poll its status, then reload the map.
@@ -67,12 +76,16 @@ export default function Districts() {
     return () => window.clearInterval(timer);
   }, [running, load]);
 
-  const districts = data?.districts ?? [];
+  const allDistricts = data?.districts;
+  const districts = useMemo(() => {
+    const all = allDistricts ?? [];
+    return topOnly ? [...all].sort((a, b) => b.score - a.score).slice(0, TOP_N) : all;
+  }, [allDistricts, topOnly]);
   const labelPoints = useMemo(
     () => districts.flatMap((d) => (d.label ? [[d.label.lat, d.label.lon] as [number, number]] : [])),
     [districts],
   );
-  const empty = data !== null && districts.length === 0;
+  const empty = data !== null && data.districts.length === 0;
   const selectedLabel = districts.find((d) => d.id === selectedId)?.label;
 
   let sheet;
@@ -91,7 +104,7 @@ export default function Districts() {
           setOverviewCount((n) => n + 1);
         }}
       >
-        <DistrictSheet id={selectedId} />
+        <DistrictSheet id={selectedId} electionId={electionId} />
       </BackContext.Provider>
     );
   } else if (empty || panel === "import" || running) {
@@ -107,7 +120,18 @@ export default function Districts() {
       />
     );
   } else {
-    sheet = <OverviewSheet data={data} onSelect={setSelectedId} onPanel={setPanel} />;
+    sheet = (
+      <OverviewSheet
+        data={data}
+        onSelect={setSelectedId}
+        onPanel={setPanel}
+        onElection={setElectionId}
+        colorBy={colorBy}
+        onColorBy={setColorBy}
+        topOnly={topOnly}
+        onTopOnly={setTopOnly}
+      />
+    );
   }
 
   return (
@@ -115,8 +139,11 @@ export default function Districts() {
       <MapLayers>
         {districts.length > 0 && (
           <>
-            <FitBounds points={labelPoints} fitKey={`districts-${districts.length}-${data?.import?.id}-${overviewCount}`} />
-            <DistrictLayer districts={districts} selectedId={selectedId} onSelect={setSelectedId} />
+            <FitBounds
+              points={labelPoints}
+              fitKey={`districts-${districts.length}-${data?.import?.id}-${overviewCount}-${topOnly}`}
+            />
+            <DistrictLayer districts={districts} selectedId={selectedId} onSelect={setSelectedId} colorBy={colorBy} />
             <DistrictLabels districts={districts} onSelect={setSelectedId} />
             <FlyTo point={selectedLabel ? [selectedLabel.lat, selectedLabel.lon] : null} zoom={15} />
           </>
@@ -129,10 +156,13 @@ export default function Districts() {
 
 // --------------------------------------------------------------------------- map layers
 
-function districtStyle(score: number, selected: boolean): L.PathOptions {
+type DistrictProps = { id: number; score: number; done_pct: number };
+
+function districtStyle(p: DistrictProps, selected: boolean, colorBy: ColorBy): L.PathOptions {
+  const fillColor = colorBy === "done" ? doneColor(p.done_pct) : scoreColor(p.score);
   return selected
-    ? { fillColor: scoreColor(score), fillOpacity: 0.7, color: "#18181b", weight: 3, opacity: 1 }
-    : { fillColor: scoreColor(score), fillOpacity: 0.5, color: "#ffffff", weight: 0.8, opacity: 0.9 };
+    ? { fillColor, fillOpacity: 0.75, color: "#18181b", weight: 3, opacity: 1 }
+    : { fillColor, fillOpacity: colorBy === "done" ? 0.65 : 0.5, color: "#ffffff", weight: 0.8, opacity: 0.9 };
 }
 
 /** All districts in one canvas layer (thousands of polygons: drawn imperatively, restyled on selection). */
@@ -140,23 +170,31 @@ function DistrictLayer({
   districts,
   selectedId,
   onSelect,
+  colorBy,
 }: {
   districts: MapDistrict[];
   selectedId: number | null;
   onSelect: (id: number) => void;
+  colorBy: ColorBy;
 }) {
   const map = useMap();
   const layer = useRef<L.GeoJSON | null>(null);
   const select = useRef(onSelect);
   select.current = onSelect;
+  const mode = useRef(colorBy);
+  mode.current = colorBy;
 
   useEffect(() => {
     const collection: FeatureCollection = {
       type: "FeatureCollection",
-      features: districts.map((d) => ({ type: "Feature", properties: { id: d.id, score: d.score }, geometry: d.geometry as never })),
+      features: districts.map((d) => ({
+        type: "Feature",
+        properties: { id: d.id, score: d.score, done_pct: d.done_pct } satisfies DistrictProps,
+        geometry: d.geometry as never,
+      })),
     };
     const geo = L.geoJSON(collection, {
-      style: (f) => districtStyle(f?.properties.score ?? 0, false),
+      style: (f) => districtStyle(f?.properties as DistrictProps, false, mode.current),
       onEachFeature: (f, l) =>
         l.on("click", (e) => {
           L.DomEvent.stopPropagation(e);
@@ -172,13 +210,13 @@ function DistrictLayer({
 
   useEffect(() => {
     layer.current?.eachLayer((l) => {
-      const path = l as L.Path & { feature?: { properties: { id: number; score: number } } };
+      const path = l as L.Path & { feature?: { properties: DistrictProps } };
       if (!path.feature) return;
       const selected = path.feature.properties.id === selectedId;
-      path.setStyle(districtStyle(path.feature.properties.score, selected));
+      path.setStyle(districtStyle(path.feature.properties, selected, colorBy));
       if (selected) path.bringToFront();
     });
-  }, [selectedId, districts]);
+  }, [selectedId, districts, colorBy]);
 
   return null;
 }
@@ -238,6 +276,23 @@ function ScoreLegend() {
   );
 }
 
+/** Light → plain red → almost black, as on the map in "% fait" mode. */
+function DoneLegend() {
+  return (
+    <div>
+      <div
+        className="h-2.5 rounded-lg"
+        style={{ background: `linear-gradient(to right, ${DONE_STOPS.map((s) => `${s.color} ${s.pct}%`).join(", ")})` }}
+      />
+      <div className="mt-1 flex justify-between text-[11px] text-zinc-500 tabular-nums">
+        <span>0 %</span>
+        <span>50 %</span>
+        <span>100 % fait</span>
+      </div>
+    </div>
+  );
+}
+
 function ScoreBadge({ score, large = false }: { score: number; large?: boolean }) {
   const dark = score >= 40;
   return (
@@ -256,19 +311,50 @@ function OverviewSheet({
   data,
   onSelect,
   onPanel,
+  onElection,
+  colorBy,
+  onColorBy,
+  topOnly,
+  onTopOnly,
 }: {
   data: DistrictMap;
   onSelect: (id: number) => void;
   onPanel: (p: "weights" | "import") => void;
+  onElection: (id: number | null) => void;
+  colorBy: ColorBy;
+  onColorBy: (c: ColorBy) => void;
+  topOnly: boolean;
+  onTopOnly: (on: boolean) => void;
 }) {
   const best = data.districts.slice(0, 3); // already sorted by score
+  const shown = topOnly ? Math.min(TOP_N, data.districts.length) : data.districts.length;
   return (
     <Sheet
-      title={`Zones (${data.districts.length.toLocaleString("fr")})`}
+      title={`Zones (${shown.toLocaleString("fr")})`}
       subtitle={data.election || "Bureaux de vote"}
       locate={false}
+      action={
+        <button
+          type="button"
+          onClick={() => onTopOnly(!topOnly)}
+          aria-pressed={topOnly}
+          className={`rounded-full px-2.5 py-1 text-xs font-semibold transition ${
+            topOnly ? "bg-brand-600 text-white" : "bg-zinc-100 text-zinc-600 active:bg-zinc-200"
+          }`}
+        >
+          {TOP_N} meilleures
+        </button>
+      }
     >
-      <ScoreLegend />
+      <Segmented
+        value={colorBy}
+        onChange={onColorBy}
+        options={[
+          { value: "score", label: "Score" },
+          { value: "done", label: "% fait" },
+        ]}
+      />
+      {colorBy === "score" ? <ScoreLegend /> : <DoneLegend />}
       <div className="grid grid-cols-2 gap-2">
         <Button variant="secondary" size="sm" icon={SlidersHorizontal} onClick={() => onPanel("weights")}>
           Pondération
@@ -277,6 +363,26 @@ function OverviewSheet({
           Réimporter
         </Button>
       </div>
+
+      {data.elections.length > 0 && (
+        <Field label="Portes faites pendant">
+          <select
+            className={inputClass}
+            value={data.progress_election ?? ""}
+            onChange={(e) => {
+              const election = data.elections.find((x) => x.id === Number(e.target.value));
+              onElection(!election || election.is_current ? null : election.id);
+            }}
+          >
+            {data.elections.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.name}
+                {e.is_current ? " (en cours)" : ""}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
 
       <SectionTitle>Meilleurs scores</SectionTitle>
       <div className="space-y-2">
@@ -314,7 +420,7 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function DistrictSheet({ id }: { id: number }) {
+function DistrictSheet({ id, electionId }: { id: number; electionId: number | null }) {
   const navigate = useNavigate();
   const [detail, setDetail] = useState<DistrictDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -322,8 +428,10 @@ function DistrictSheet({ id }: { id: number }) {
   useEffect(() => {
     setDetail(null);
     setError(null);
-    api<DistrictDetail>(`/manage/districts/${id}/`).then(setDetail).catch((e) => setError(errorMessage(e)));
-  }, [id]);
+    api<DistrictDetail>(`/manage/districts/${id}/`, { query: electionId ? { election: electionId } : undefined })
+      .then(setDetail)
+      .catch((e) => setError(errorMessage(e)));
+  }, [id, electionId]);
 
   if (!detail)
     return (
@@ -334,6 +442,7 @@ function DistrictSheet({ id }: { id: number }) {
 
   const d = detail;
   const p = d.progress;
+  const progressElection = d.elections.find((e) => e.id === d.progress_election);
   const totalWeight = d.score_parts.reduce((sum, part) => sum + (part.rank != null ? part.weight : 0), 0);
   const maxPartyPct = Math.max(1, ...d.parties.map((x) => x.pct ?? 0));
 
@@ -367,7 +476,10 @@ function DistrictSheet({ id }: { id: number }) {
 
       {p.total > 0 && (
         <>
-          <SectionTitle>Français·es de la zone</SectionTitle>
+          <SectionTitle>
+            Français·es de la zone
+            {progressElection && <span className="font-normal"> · {progressElection.name}</span>}
+          </SectionTitle>
           <ProgressCard progress={p} />
           <AgePyramid ages={d.ages} />
         </>

@@ -312,56 +312,71 @@ def add_low_income(organization) -> int:
 # --------------------------------------------------------------------------- progress
 
 
-def progress(organization_id: int, district_ids: list[int] | None = None) -> dict[int, dict]:
-    """Per district, the organization's addresses (= French voters on the list) inside:
+def progress(organization_id: int, district_ids: list[int] | None = None, election=None) -> dict[int, dict]:
+    """Per district, the organization's addresses (= French voters on the list) inside, for one election
+    (default: the current one). Only the visits of that election count: a new election starts at 0 %.
 
-    - `total`;
-    - `remaining`: still to do, split into `not_leafleted` (nobody went, or the mailbox was inaccessible) and
-      `leafleted` (a militant came during the current election, nobody answered, a leaflet was left);
-    - `to_visit`: the remaining ones free to be put in a new tour (not in someone's tour right now);
-    - `done` / `done_pct`: people met (or addresses settled: not found, do not contact).
+    - `total`: the addresses concerned by this election. Not counted: people who asked not to be disturbed and
+      addresses not found during an earlier election (they stay out of the tours), unless visited in this one;
+    - `done` / `done_pct`: people met during this election (or address settled: not found, do not contact);
+    - `remaining` = total - done, split into `leafleted` (came during this election, nobody answered, a leaflet was
+      left) and `not_leafleted` (nobody came yet, or the mailbox was inaccessible);
+    - `to_visit`: addresses free to be put in a new tour right now (current state, whatever the election).
     """
     from ..models import AbsentDetail, Address, Election, Status, Visit, VisitResult
 
-    table = District._meta.db_table
-    election = Election.current()
-    in_election = "AND v.election_id = %s" if election else ""
-    leafleted = f"""EXISTS (
-        SELECT 1 FROM {Visit._meta.db_table} v
-        WHERE v.address_id = a.id AND v.result = %s AND v.absent_detail <> %s {in_election}
-    )"""
-    params: list = [
-        Status.TO_VISIT,
-        [Status.TO_VISIT, Status.PLANNED],
-        [Status.TO_VISIT, Status.PLANNED],
-        VisitResult.ADDRESS_TO_RETRY,
-        AbsentDetail.MAILBOX_INACCESSIBLE,
-        *([election.id] if election else []),
-        organization_id,
-    ]
-    only = ""
-    if district_ids is not None:
-        only = "AND d.id = ANY(%s)"
-        params.append(list(district_ids))
+    if election is None:
+        election = Election.current()
+    params: dict = {
+        "organization": organization_id,
+        "to_visit": Status.TO_VISIT,
+        "retry": VisitResult.ADDRESS_TO_RETRY,
+        "inaccessible": AbsentDetail.MAILBOX_INACCESSIBLE,
+        "settled": [VisitResult.DO_NOT_CONTACT, VisitResult.ADDRESS_FAILURE],
+        "election": election.id if election else None,
+        "earlier": list(Election.objects.filter(created_at__lt=election.created_at).values_list("id", flat=True))
+        if election
+        else [],
+        "districts": list(district_ids) if district_ids is not None else None,
+    }
+    visits = Visit._meta.db_table
+    # No election at all on the site: every visit counts.
+    in_election = "AND v.election_id = %(election)s" if election else ""
+    only = "AND d.id = ANY(%(districts)s)" if district_ids is not None else ""
     with connection.cursor() as cursor:
         cursor.execute(
             f"""
             SELECT d.id,
-                   COUNT(a.id),
-                   COUNT(a.id) FILTER (WHERE a.status = %s),
-                   COUNT(a.id) FILTER (WHERE a.status = ANY(%s)),
-                   COUNT(a.id) FILTER (WHERE a.status = ANY(%s) AND {leafleted})
-            FROM {table} d
+                   COUNT(a.id) FILTER (WHERE NOT f.carried),
+                   COUNT(a.id) FILTER (WHERE a.status = %(to_visit)s),
+                   COUNT(a.id) FILTER (WHERE f.done),
+                   COUNT(a.id) FILTER (WHERE NOT f.done AND NOT f.carried AND f.leafleted)
+            FROM {District._meta.db_table} d
             JOIN {Address._meta.db_table} a
               ON a.organization_id = d.organization_id AND a.disabled_at IS NULL AND ST_Contains(d.geometry, a.location)
-            WHERE d.organization_id = %s {only}
+            CROSS JOIN LATERAL (
+                SELECT
+                    EXISTS (SELECT 1 FROM {visits} v WHERE v.address_id = a.id AND v.result <> %(retry)s {in_election}) AS done,
+                    EXISTS (
+                        SELECT 1 FROM {visits} v
+                        WHERE v.address_id = a.id AND v.result = %(retry)s AND v.absent_detail <> %(inaccessible)s {in_election}
+                    ) AS leafleted,
+                    (
+                        EXISTS (
+                            SELECT 1 FROM {visits} v
+                            WHERE v.address_id = a.id AND v.result = ANY(%(settled)s) AND v.election_id = ANY(%(earlier)s)
+                        )
+                        AND NOT EXISTS (SELECT 1 FROM {visits} v WHERE v.address_id = a.id {in_election})
+                    ) AS carried
+            ) f
+            WHERE d.organization_id = %(organization)s {only}
             GROUP BY d.id
             """,
             params,
         )
         result = {}
-        for pk, total, to_visit, remaining, n_leafleted in cursor.fetchall():
-            done = total - remaining
+        for pk, total, to_visit, done, n_leafleted in cursor.fetchall():
+            remaining = total - done
             result[pk] = {
                 "total": total,
                 "to_visit": to_visit,

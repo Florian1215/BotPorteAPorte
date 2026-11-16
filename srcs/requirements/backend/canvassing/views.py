@@ -189,11 +189,25 @@ class DistrictManagerView(CanvasserView):
     def organization(self):
         return self.request.user.organization
 
+    @property
+    def election(self) -> Election | None:
+        """Election whose progress is shown (`?election=<id>`), default: the current one."""
+        pk = self.request.query_params.get("election", "")
+        return get_object_or_404(Election, pk=int(pk)) if pk.isdigit() else Election.current()
+
+
+def elections_for_progress(selected: Election | None) -> dict:
+    return {
+        "elections": [{"id": e.id, "name": e.name, "is_current": e.is_current} for e in Election.objects.all()],
+        "progress_election": selected.id if selected else None,
+    }
+
 
 class ManageDistrictListView(DistrictManagerView):
     def get(self, request):
         organization = self.organization
-        progress = district_service.progress(organization.id)
+        election = self.election
+        progress = district_service.progress(organization.id, election=election)
         districts = with_outline(District.objects.filter(organization=organization))
         first = District.objects.filter(organization=organization).only("election").first()
         return Response(
@@ -206,6 +220,7 @@ class ManageDistrictListView(DistrictManagerView):
                 "criteria": [{"key": c.key, "label": c.label} for c in scoring.CRITERIA],
                 "import": import_to_dict(last_import(organization)),
                 "presets": [{"key": k, **v} for k, v in district_service.PRESETS.items()],
+                **elections_for_progress(election),
             }
         )
 
@@ -213,10 +228,11 @@ class ManageDistrictListView(DistrictManagerView):
 class ManageDistrictDetailView(DistrictManagerView):
     def get(self, request, pk):
         district = get_object_or_404(District, pk=pk, organization_id=request.user.organization_id)
-        progress = district_service.progress(district.organization_id, [district.id]).get(
+        election = self.election
+        progress = district_service.progress(district.organization_id, [district.id], election=election).get(
             district.id, district_service.EMPTY_PROGRESS
         )
-        return Response(district_detail(district, progress))
+        return Response({**district_detail(district, progress), **elections_for_progress(election)})
 
 
 def district_detail(d: District, progress: dict) -> dict:

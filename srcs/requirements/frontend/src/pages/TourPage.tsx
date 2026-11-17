@@ -343,13 +343,7 @@ function TourControls({ tour, setTour }: { tour: Tour; setTour: (t: Tour) => voi
             <Metric icon={RouteIcon} label="Distance" value={formatDistance(tour.route_distance_m)} hint={tour.route_approximate ? "à vol d'oiseau" : undefined} />
             <Metric icon={Clock} label="Marche" value={`~${formatDuration(tour.route_duration_s)}`} />
           </div>
-          {tour.too_many_addresses && (
-            <Alert kind="warning">
-              C'est beaucoup d'adresses : on a gardé les {tour.stops.length} plus proches. Tu peux arrêter avant la fin, mais
-              elles seront bloquées pour les autres pendant ta tournée.
-              {tour.kind === "free" && " Pense à réduire la déviation (250 m suffisent souvent en ville)."}
-            </Alert>
-          )}
+          {tour.too_many_addresses && <Alert kind="warning">Limite de {tour.stops.length} portes</Alert>}
           {error && <Alert>{error}</Alert>}
         </Sheet>
       </>

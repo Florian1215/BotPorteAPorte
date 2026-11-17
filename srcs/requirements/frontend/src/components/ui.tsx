@@ -278,6 +278,7 @@ export function Sheet({
   locate = true,
   back = true,
   above,
+  half = false,
 }: {
   title?: ReactNode;
   subtitle?: ReactNode;
@@ -289,6 +290,8 @@ export function Sheet({
   back?: boolean;
   /** Floating content docked right above the sheet (e.g. a notification). */
   above?: ReactNode;
+  /** At most half the screen high (the body scrolls), so the map stays visible. */
+  half?: boolean;
 }) {
   const { sheetHeight } = useMapUI();
   const goBack = useBack();
@@ -400,7 +403,7 @@ export function Sheet({
             {above}
           </div>
         )}
-        <div ref={panel} className="flex max-h-[82dvh] short:max-h-[88dvh] flex-col rounded-t-[30px] bg-white/[0.97] shadow-sheet ring-1 ring-zinc-950/5 backdrop-blur-2xl sm:rounded-[30px]">
+        <div ref={panel} className={`flex ${half ? "max-h-[50dvh]" : "max-h-[82dvh] short:max-h-[88dvh]"} flex-col rounded-t-[30px] bg-white/[0.97] shadow-sheet ring-1 ring-zinc-950/5 backdrop-blur-2xl sm:rounded-[30px]`}>
           <div ref={header} {...dragHandlers} className="shrink-0 touch-none select-none">
             <button
               type="button"

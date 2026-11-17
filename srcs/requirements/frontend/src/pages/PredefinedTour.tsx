@@ -14,6 +14,18 @@ import { useGeo } from "../hooks/useGeolocation";
 import { scoreColor } from "../lib/constants";
 import { areaPoints } from "../lib/geo";
 
+const RADII_KM = [1, 3, 5, 10];
+const RADIUS_KEY = "predefined-tour-radius-km";
+
+function savedRadius(): number {
+  try {
+    const value = Number(localStorage.getItem(RADIUS_KEY));
+    return RADII_KM.includes(value) ? value : 3;
+  } catch {
+    return 3;
+  }
+}
+
 export default function PredefinedTour() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -26,16 +38,44 @@ export default function PredefinedTour() {
   const [activeTour, setActiveTour] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const here = geo.here;
+  // Where the zones are searched around: the first known position (not refetched as the militant moves),
+  // or nowhere (best zones of the whole organization) when the position is unavailable.
+  const [origin, setOrigin] = useState<LatLon | null | undefined>(undefined);
+  const [radius, setRadius] = useState(savedRadius);
+  const pickRadius = (km: number) => {
+    setRadius(km);
+    try {
+      localStorage.setItem(RADIUS_KEY, String(km));
+    } catch {
+      /* storage unavailable: the choice only lasts for this visit */
+    }
+  };
+  useEffect(() => {
+    if (origin !== undefined) return;
+    if (here) setOrigin(here);
+    else if (geo.status === "error") setOrigin(null);
+  }, [here, geo.status, origin]);
 
   useEffect(() => {
-    api<Area[]>("/areas/", { query: zone ? { zone } : undefined })
+    if (origin === undefined) return;
+    const query: Record<string, number> = {};
+    if (zone) query.zone = zone;
+    if (origin) Object.assign(query, { lat: origin.lat, lon: origin.lon, radius_km: radius });
+    let cancelled = false;
+    setAreas(null);
+    setError(null);
+    api<Area[]>("/areas/", { query })
       .then((list) => {
+        if (cancelled) return;
         setAreas(list);
         const picked = zone ? list.find((a) => a.id === zone) : undefined;
         if (picked) setSelected(picked);
       })
-      .catch((e) => setError(errorMessage(e)));
-  }, [zone]);
+      .catch((e) => !cancelled && setError(errorMessage(e)));
+    return () => {
+      cancelled = true;
+    };
+  }, [zone, origin, radius]);
   // Start point: the device position as soon as it is known (also for a zone picked from the zones map).
   useEffect(() => {
     if (selected && here && !start) setStart(here);
@@ -69,7 +109,7 @@ export default function PredefinedTour() {
   return (
     <>
       <MapLayers>
-        <FitBounds points={allPoints} fitKey={`${areas?.length}-${selected?.id}`} />
+        <FitBounds points={allPoints} fitKey={`${radius}-${areas?.length}-${selected?.id}`} />
         {selected && <MapClick onClick={setStart} />}
         {(areas ?? []).map((area) => (
           <GeoJSON
@@ -89,11 +129,42 @@ export default function PredefinedTour() {
       </MapLayers>
 
       {!selected ? (
-        <Sheet title="Tournée préparée">
-          {!areas && !error && <Loading />}
+        <Sheet
+          half
+          title="Tournée préparée"
+          subtitle={
+            origin === undefined ? undefined : origin ? (
+              <div className="space-y-2">
+                <p>Les 10 meilleures zones autour de toi</p>
+                <div className="flex gap-1.5" role="radiogroup" aria-label="Rayon de recherche">
+                  {RADII_KM.map((km) => (
+                    <button
+                      key={km}
+                      type="button"
+                      role="radio"
+                      aria-checked={radius === km}
+                      onClick={() => pickRadius(km)}
+                      className={`flex-1 rounded-full py-1.5 text-xs font-semibold tabular-nums ring-1 ${
+                        radius === km
+                          ? "bg-brand-600 text-white ring-brand-600"
+                          : "bg-white text-zinc-700 ring-zinc-950/10 active:bg-zinc-50"
+                      }`}
+                    >
+                      {km} km
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              "Les 10 meilleures zones (position indisponible)"
+            )
+          }
+        >
+          {origin === undefined && <LocationStatus geo={geo} onRetry={geo.retry} />}
+          {origin !== undefined && !areas && !error && <Loading />}
           {error && <Alert>{error}</Alert>}
           {areas?.length === 0 && (
-            <EmptyState icon={MapPinned} title="Aucune zone préparée">
+            <EmptyState icon={MapPinned} title={origin ? `Aucune zone à moins de ${radius} km` : "Aucune zone préparée"}>
             </EmptyState>
           )}
           <div className="space-y-2">

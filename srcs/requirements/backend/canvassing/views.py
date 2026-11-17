@@ -35,6 +35,8 @@ from .services.geo import bbox_around
 
 NEARBY_LIMIT = 3000
 TOP_AREAS = 10
+AREAS_RADII_KM = (1, 3, 5, 10)  # "Tournée préparée": best zones around the militant, radius picked in the app
+AREAS_DEFAULT_RADIUS_KM = 3
 
 
 def error(message: str, status_code: int = status.HTTP_400_BAD_REQUEST, **extra) -> Response:
@@ -155,14 +157,48 @@ class StopsResultView(TourMixin, CanvasserView):
 # --------------------------------------------------------------------------- areas & addresses
 
 
+def point_param(request) -> tuple[float, float] | None:
+    """(lat, lon) from the query string, or None when missing or invalid."""
+    try:
+        lat, lon = float(request.query_params["lat"]), float(request.query_params["lon"])
+    except (KeyError, ValueError):
+        return None
+    return (lat, lon) if -90 <= lat <= 90 and -180 <= lon <= 180 else None
+
+
 class AreaListView(CanvasserView):
-    """Best polling districts of the user's organization (by score) that still have addresses to visit."""
+    """Best polling districts of the user's organization (by score) that still have addresses to visit.
+
+    ?lat=&lon=: only the districts within ?radius_km= (one of AREAS_RADII_KM) of that position.
+    """
 
     def get(self, request):
         organization_id = request.user.organization_id
         progress = district_service.progress(organization_id)
         candidates = [pk for pk, p in progress.items() if p["to_visit"] > 0]
-        districts = list(with_outline(District.objects.filter(id__in=candidates)).order_by("-score")[:TOP_AREAS])
+        queryset = District.objects.filter(id__in=candidates)
+        position = point_param(request)
+        if position:
+            lat, lon = position
+            try:
+                radius_km = int(request.query_params.get("radius_km", AREAS_DEFAULT_RADIUS_KM))
+            except ValueError:
+                radius_km = AREAS_DEFAULT_RADIUS_KM
+            if radius_km not in AREAS_RADII_KM:
+                radius_km = AREAS_DEFAULT_RADIUS_KM
+            bbox = Polygon.from_bbox(bbox_around([(lat, lon)], radius_km))
+            queryset = (
+                queryset.filter(geometry__bboverlaps=bbox)
+                .alias(
+                    near=RawSQL(
+                        "ST_DWithin(geometry::geography, ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography, %s)",
+                        (lon, lat, radius_km * 1000),
+                        output_field=BooleanField(),
+                    )
+                )
+                .filter(near=True)
+            )
+        districts = list(with_outline(queryset).order_by("-score")[:TOP_AREAS])
         # ?zone=<id>: a district picked on the zones map (responsables), even outside the top list.
         zone = request.query_params.get("zone")
         if zone and zone.isdigit() and int(zone) in candidates and all(d.id != int(zone) for d in districts):

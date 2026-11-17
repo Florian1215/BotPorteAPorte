@@ -9,6 +9,12 @@ import { createContext, useContext, type RefObject } from "react";
 export type MapUI = {
   map: L.Map | null;
   sheetHeight: RefObject<number>;
+  /** Point the map was last centered on (fly to), kept centered above the sheet until the user moves the map. */
+  focus: RefObject<{ point: [number, number]; zoom: number } | null>;
+  /** Our own animations are running (their zoom must not be mistaken for the user's). */
+  flying: RefObject<boolean>;
+  /** Called by the sheet when its visible height changes. */
+  sheetChanged: () => void;
 };
 
 export const MapUIContext = createContext<MapUI | null>(null);

@@ -1,6 +1,6 @@
 import { LeafletContext, createLeafletContext } from "@react-leaflet/core";
 import L from "leaflet";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AttributionControl, Circle, CircleMarker, MapContainer, Marker, TileLayer, useMap, useMapEvents } from "react-leaflet";
 
 import { api } from "../api/client";
@@ -37,8 +37,51 @@ export function MapShell({ children }: { children: ReactNode }) {
   const [map, setMap] = useState<L.Map | null>(null);
   const tiles = useTileConfig();
   const sheetHeight = useRef(0);
+  const focus = useRef<{ point: [number, number]; zoom: number } | null>(null);
+  const flying = useRef(false);
+  const recenterTimer = useRef<number | undefined>(undefined);
   const initial = useMemo(() => lastKnownPosition(), []);
-  const ui = useMemo(() => ({ map, sheetHeight }), [map]);
+
+  // The sheet grew or shrank (content loaded, collapsed…): keep the focused point in the middle of the free space.
+  // Debounced, so it runs once the sheet has settled (height transition, several loads in a row).
+  const sheetChanged = useCallback(() => {
+    if (!map) return;
+    window.clearTimeout(recenterTimer.current);
+    recenterTimer.current = window.setTimeout(() => {
+      const f = focus.current;
+      if (!f) return;
+      const target = visibleCenter(map, f.point, f.zoom, sheetHeight.current ?? 0);
+      const shift = map.project(target, f.zoom).subtract(map.project(map.getCenter(), f.zoom));
+      if (map.getZoom() === f.zoom && Math.abs(shift.x) < 2 && Math.abs(shift.y) < 2) return;
+      flying.current = true;
+      map.flyTo(target, f.zoom, { duration: 0.35 });
+    }, 200);
+  }, [map]);
+
+  // The user moving or zooming the map themselves: stop keeping the point centered.
+  useEffect(() => {
+    if (!map) return;
+    const release = () => {
+      if (!flying.current) focus.current = null;
+    };
+    const settled = () => {
+      flying.current = false;
+    };
+    const dragged = () => {
+      focus.current = null;
+    };
+    map.on("zoomstart", release);
+    map.on("dragstart", dragged);
+    map.on("moveend", settled);
+    return () => {
+      map.off("zoomstart", release);
+      map.off("dragstart", dragged);
+      map.off("moveend", settled);
+      window.clearTimeout(recenterTimer.current);
+    };
+  }, [map]);
+
+  const ui = useMemo(() => ({ map, sheetHeight, focus, flying, sheetChanged }), [map, sheetChanged]);
 
   return (
     <MapUIContext.Provider value={ui}>
@@ -76,10 +119,12 @@ function visibleCenter(map: L.Map, target: L.LatLngExpression, zoom: number, she
 }
 
 export function useFlyTo() {
-  const { map, sheetHeight } = useMapUI();
+  const { map, sheetHeight, focus, flying } = useMapUI();
   return (point: [number, number], zoom?: number) => {
     if (!map) return;
     const z = zoom ?? Math.max(map.getZoom(), 16);
+    focus.current = { point, zoom: z };
+    flying.current = true;
     map.flyTo(visibleCenter(map, point, z, sheetHeight.current ?? 0), z, { duration: 0.6 });
   };
 }
@@ -87,7 +132,7 @@ export function useFlyTo() {
 /** Fit the view to the given points (above the sheet) whenever `fitKey` changes. */
 export function FitBounds({ points, fitKey, maxZoom = 17 }: { points: [number, number][]; fitKey: string; maxZoom?: number }) {
   const map = useMap();
-  const { sheetHeight } = useMapUI();
+  const { sheetHeight, focus, flying } = useMapUI();
   const flyTo = useFlyTo();
   useEffect(() => {
     if (points.length === 0) return;
@@ -95,6 +140,8 @@ export function FitBounds({ points, fitKey, maxZoom = 17 }: { points: [number, n
       flyTo(points[0], Math.max(map.getZoom(), 15));
       return;
     }
+    focus.current = null; // a set of points, not one point to keep centered
+    flying.current = true;
     map.flyToBounds(L.latLngBounds(points), {
       paddingTopLeft: [24, TOP_BAR_PX + 8],
       // A tall sheet on a short screen would leave a sliver of map: never reserve more than 60 % of it.

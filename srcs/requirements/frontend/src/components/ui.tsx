@@ -293,7 +293,7 @@ export function Sheet({
   /** At most half the screen high (the body scrolls), so the map stays visible. */
   half?: boolean;
 }) {
-  const { sheetHeight } = useMapUI();
+  const { sheetHeight, sheetChanged } = useMapUI();
   const goBack = useBack();
   const showBack = back && goBack !== null;
   const ref = useRef<HTMLDivElement>(null);
@@ -328,7 +328,11 @@ export function Sheet({
       const max = panel.current && header.current ? Math.max(0, panel.current.offsetHeight - header.current.offsetHeight) : 0;
       setHideBy(max);
       // The map keeps what is under the visible part of the sheet free (fit bounds, fly to).
-      sheetHeight.current = el.offsetHeight - (collapsed ? max : 0);
+      const visible = el.offsetHeight - (collapsed ? max : 0);
+      if (visible !== sheetHeight.current) {
+        sheetHeight.current = visible;
+        sheetChanged();
+      }
     };
     update();
     const observer = new ResizeObserver(update);
@@ -338,7 +342,7 @@ export function Sheet({
       observer.disconnect();
       sheetHeight.current = 0;
     };
-  }, [sheetHeight, collapsed]);
+  }, [sheetHeight, sheetChanged, collapsed]);
 
   // Drag the sheet by its header: it follows the finger, then settles open or collapsed
   // (by position, or by a quick flick). A simple tap on the handle still toggles it.

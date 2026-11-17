@@ -205,7 +205,11 @@ class AreaListView(CanvasserView):
             districts.insert(0, with_outline(District.objects.filter(id=int(zone))).get())
         return Response(
             [
-                district_to_dict(d, n_to_visit=progress[d.id]["to_visit"], done_pct=progress[d.id]["done_pct"])
+                {
+                    **district_to_dict(d, n_to_visit=progress[d.id]["to_visit"], done_pct=progress[d.id]["done_pct"]),
+                    "n_total": progress[d.id]["total"],
+                    "n_done": progress[d.id]["done"],
+                }
                 for d in districts
             ]
         )
@@ -243,7 +247,13 @@ class ManageDistrictListView(DistrictManagerView):
             {
                 "election": first.election if first else "",
                 "districts": [
-                    district_to_dict(d, done_pct=progress.get(d.id, {}).get("done_pct", 0)) for d in districts
+                    {
+                        **district_to_dict(d, done_pct=(p := progress.get(d.id, district_service.EMPTY_PROGRESS))["done_pct"]),
+                        # Map labels in "% fait" mode: French voters of the election, and how many are done.
+                        "n_total": p["total"],
+                        "n_done": p["done"],
+                    }
+                    for d in districts
                 ],
                 "weights": scoring.weights_of(organization),
                 "criteria": [{"key": c.key, "label": c.label} for c in scoring.CRITERIA],
@@ -269,7 +279,9 @@ def district_detail(d: District, progress: dict) -> dict:
         return round(100 * num / den, 1) if num is not None and den else None
 
     parties = sorted(d.parties.items(), key=lambda kv: -kv[1])
-    density = d.population / d.area_km2 if d.population is not None and d.area_km2 else None
+    # Same figures as in the score: the French voters of the list (density, ages), not the census.
+    french = scoring.french_stats(d.organization_id, [d.id]).get(d.id)
+    density = (french.count if french else 0) / d.area_km2 if d.area_km2 else None
     return {
         **district_to_dict(d, done_pct=progress["done_pct"]),
         "election": d.election,
@@ -283,8 +295,8 @@ def district_detail(d: District, progress: dict) -> dict:
         "population": d.population,
         "area_km2": round(d.area_km2, 3),
         "density": round(density) if density is not None else None,
-        "share_18_29": d.share_18_29,
-        "share_65_plus": d.share_65_plus,
+        "share_18_29": french.share_18_29 if french else None,
+        "share_65_plus": french.share_65_plus if french else None,
         "share_foreign": d.share_foreign,
         "rent_m2": d.rent_m2,
         "low_income": d.low_income,

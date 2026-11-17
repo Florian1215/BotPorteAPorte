@@ -135,7 +135,8 @@ export type District = {
 };
 
 /** Best districts to canvass, for prepared tours (militant·es). */
-export type Area = District & { n_to_visit: number; done_pct: number };
+/** `n_total`: French voters of the current election in the district, `n_done`: those done. */
+export type Area = District & { n_to_visit: number; done_pct: number; n_total: number; n_done: number };
 
 export type ScoreCriterionKey = "linke" | "abstention" | "young" | "density" | "low_income";
 export type ScoreWeights = Record<ScoreCriterionKey, number>;
@@ -166,7 +167,8 @@ export type ProgressElections = {
 export type DistrictMap = ProgressElections & {
   /** Reference election of the score (votes), not the canvassing campaign. */
   election: string;
-  districts: (District & { done_pct: number })[];
+  /** `n_total`: French voters of the current election in the district, `n_done`: those done. */
+  districts: (District & { done_pct: number; n_total: number; n_done: number })[];
   weights: ScoreWeights;
   criteria: { key: ScoreCriterionKey; label: string }[];
   import: DistrictImport | null;

@@ -1,5 +1,5 @@
 import type { Feature } from "geojson";
-import { Check, ChevronDown, ChevronRight, LocateFixed, MapPinned, Sparkles } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, MapPinned, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { GeoJSON } from "react-leaflet";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -9,6 +9,7 @@ import ActiveTourAlert, { activeTourId } from "../components/ActiveTourAlert";
 import type { Area, LatLon, Tour } from "../api/types";
 import LocationStatus from "../components/LocationStatus";
 import { FitBounds, MapClick, MapLayers, PinMarker } from "../components/map";
+import { BackContext } from "../context/BackContext";
 import { Alert, Button, EmptyState, Loading, Sheet } from "../components/ui";
 import { useGeo } from "../hooks/useGeolocation";
 import { scoreColor } from "../lib/constants";
@@ -176,33 +177,53 @@ export default function PredefinedTour() {
           </div>
         </Sheet>
       ) : (
-        <Sheet
-          title={selected.name}
-          subtitle={`${selected.n_to_visit} adresses à visiter · touche la carte pour changer le départ`}
-          action={
-            <Button variant="secondary" size="sm" onClick={() => select(null)}>
-              Changer
-            </Button>
-          }
-          footer={
-            <div className="grid grid-cols-2 gap-2">
-              <Button variant="secondary" icon={LocateFixed} disabled={!here} onClick={() => here && setStart(here)}>
-                Ma position
-              </Button>
-              <Button icon={Sparkles} disabled={!start} loading={loading} onClick={compute}>
+        // "Back" returns to the list of zones (instead of leaving the page).
+        <BackContext.Provider value={() => select(null)}>
+          <Sheet
+            title={selected.name}
+            subtitle="Touche la carte pour changer le départ"
+            footer={
+              <Button className="w-full" icon={Sparkles} disabled={!start} loading={loading} onClick={compute}>
                 Calculer
               </Button>
-            </div>
-          }
-        >
-          {!start && <LocationStatus geo={geo} onRetry={geo.retry} />}
-          {!start && geo.status !== "pending" && <p className="text-sm text-zinc-600">Place ton point de départ sur la carte.</p>}
-          {loading && <p className="text-sm text-zinc-500">Calcul des distances réelles pour optimiser la tournée…</p>}
-          {activeTour !== null && <ActiveTourAlert tourId={activeTour} onStopped={compute} />}
-          {error && <Alert>{error}</Alert>}
-        </Sheet>
+            }
+          >
+            <AreaStats area={selected} />
+            {!start && <LocationStatus geo={geo} onRetry={geo.retry} />}
+            {!start && geo.status !== "pending" && <p className="text-sm text-zinc-600">Place ton point de départ sur la carte.</p>}
+            {loading && <p className="text-sm text-zinc-500">Calcul des distances réelles pour optimiser la tournée…</p>}
+            {activeTour !== null && <ActiveTourAlert tourId={activeTour} onStopped={compute} />}
+            {error && <Alert>{error}</Alert>}
+          </Sheet>
+        </BackContext.Provider>
       )}
     </>
+  );
+}
+
+/** Score, French voters (done / total once some were) and addresses free for a tour. */
+function AreaStats({ area }: { area: Area }) {
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      <Stat label="Score" value={Math.round(area.score).toString()} color={scoreColor(area.score)} />
+      <Stat
+        label={area.n_done > 0 ? `Faits · ${area.done_pct.toLocaleString("fr")} %` : "Français·es"}
+        value={area.n_done > 0 ? `${area.n_done}/${area.n_total}` : area.n_total.toLocaleString("fr")}
+      />
+      <Stat label="À visiter" value={area.n_to_visit.toLocaleString("fr")} />
+    </div>
+  );
+}
+
+function Stat({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <div className="rounded-xl bg-zinc-50 px-3 py-2 ring-1 ring-zinc-950/5">
+      <p className="flex items-center gap-1.5 text-[15px] font-semibold tracking-tight tabular-nums">
+        {color && <span className="size-2.5 shrink-0 rounded-full" style={{ background: color }} />}
+        {value}
+      </p>
+      <p className="truncate text-xs text-zinc-500">{label}</p>
+    </div>
   );
 }
 

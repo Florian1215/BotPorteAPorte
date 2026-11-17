@@ -150,15 +150,15 @@ export const CRITERION_FORMAT: Record<ScoreCriterionKey, (v: number) => string> 
   linke: pct,
   abstention: pct,
   young: pct,
-  density: (v) => `${Math.round(v).toLocaleString("fr")} hab./km²`,
+  density: (v) => `${Math.round(v).toLocaleString("fr")} Français·es/km²`,
   low_income: pct,
 };
 
 export const CRITERION_HELP: Record<ScoreCriterionKey, string> = {
   linke: "Part des voix Die Linke (2e voix) parmi les suffrages exprimés.",
   abstention: "Inscrit·es qui n'ont pas voté : des électeur·rices à mobiliser.",
-  young: "Part des 18–29 ans dans la population (Zensus 2022).",
-  density: "Habitant·es par km² : plus de portes à l'heure.",
+  young: "Part des 18–29 ans parmi les Français·es de la liste électorale (d'après l'année de naissance).",
+  density: "Français·es de la liste électorale par km² : plus de portes à l'heure.",
   low_income:
     "Part des habitant·es qui vivent des minima sociaux (Bürgergeld / SGB II, SGB XII), d'après le Monitoring Soziale Stadtentwicklung 2023 de Berlin.",
 };

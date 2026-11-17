@@ -8,9 +8,10 @@ missing from the import) is left out and its weight is shared among the others.
 from dataclasses import dataclass
 from typing import Callable
 
-from django.db import transaction
+from django.db import connection, transaction
+from django.utils import timezone
 
-from ..models import District
+from ..models import Address, District
 
 
 @dataclass(frozen=True)
@@ -27,16 +28,57 @@ def _ratio(num, den):
 
 
 def _density(d: District):
-    if not d.area_km2:
-        return None
-    people = d.population if d.population is not None else d.eligible
-    return people / d.area_km2 if people is not None else None
+    """French voters of the organization's list per km² (set by `rescore_organization` as `n_french`)."""
+    n_french = getattr(d, "n_french", None)
+    return n_french / d.area_km2 if n_french is not None and d.area_km2 else None
+
+
+@dataclass(frozen=True)
+class FrenchStats:
+    """The French voters of the organization's list living in a district."""
+
+    count: int
+    # Shares among those whose birth year is known (None: no birth year at all).
+    share_18_29: float | None
+    share_65_plus: float | None
+
+
+def french_stats(organization_id: int, district_ids: list[int] | None = None) -> dict[int, FrenchStats]:
+    """district id → French voters on the organization's list living there (active addresses), with their ages.
+    The age is the one reached this year (birth year only)."""
+    only = "AND d.id = ANY(%(districts)s)" if district_ids is not None else ""
+    year = timezone.now().year
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"""
+            SELECT d.id,
+                   COUNT(a.id),
+                   COUNT(a.birth_year),
+                   COUNT(a.id) FILTER (WHERE %(year)s - a.birth_year BETWEEN 18 AND 29),
+                   COUNT(a.id) FILTER (WHERE %(year)s - a.birth_year >= 65)
+            FROM {District._meta.db_table} d
+            LEFT JOIN {Address._meta.db_table} a
+              ON a.organization_id = d.organization_id AND a.disabled_at IS NULL AND ST_Contains(d.geometry, a.location)
+            WHERE d.organization_id = %(organization)s {only}
+            GROUP BY d.id
+            """,
+            {
+                "organization": organization_id,
+                "districts": list(district_ids) if district_ids is not None else None,
+                "year": year,
+            },
+        )
+        return {
+            pk: FrenchStats(count, young / known if known else None, old / known if known else None)
+            for pk, count, known, young, old in cursor.fetchall()
+        }
 
 
 CRITERIA = [
     Criterion("linke", "Vote Die Linke", lambda d: _ratio(d.linke, d.valid)),
     Criterion("abstention", "Abstention", lambda d: 1 - d.voters / d.eligible if d.voters is not None and d.eligible else None),
-    Criterion("young", "18–29 ans", lambda d: d.share_18_29),
+    # Among the French voters of the list (set by `rescore_organization` as `french_18_29`), not the census.
+    Criterion("young", "18–29 ans", lambda d: getattr(d, "french_18_29", None)),
     Criterion("density", "Densité", _density),
     Criterion("low_income", "Bas revenus", lambda d: d.low_income),
 ]
@@ -114,6 +156,11 @@ def compute_scores(districts: list[District], weights: dict[str, int]) -> None:
 @transaction.atomic
 def rescore_organization(organization) -> int:
     districts = list(District.objects.filter(organization=organization))
+    stats = french_stats(organization.id)
+    for d in districts:
+        f = stats.get(d.id)
+        d.n_french = f.count if f else 0
+        d.french_18_29 = f.share_18_29 if f else None
     compute_scores(districts, weights_of(organization))
     District.objects.bulk_update(districts, ["score", "score_parts"], batch_size=500)
     return len(districts)

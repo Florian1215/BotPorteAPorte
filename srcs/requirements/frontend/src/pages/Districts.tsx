@@ -24,6 +24,9 @@ type MapDistrict = DistrictMap["districts"][number];
 /** What the colour of the districts tells: their score, or the share of doors done. */
 type ColorBy = "score" | "done";
 
+/** Best districts listed in the overview sheet (three visible, the others by scrolling). */
+const BEST_LISTED = 20;
+
 /** "50 meilleures": only the best districts by score, on the map and in the count. */
 const TOP_N = 50;
 
@@ -141,7 +144,7 @@ export default function Districts() {
               fitKey={`districts-${districts.length}-${data?.import?.id}-${overviewCount}-${topOnly}`}
             />
             <DistrictLayer districts={districts} selectedId={selectedId} onSelect={setSelectedId} colorBy={colorBy} />
-            <DistrictLabels districts={districts} onSelect={setSelectedId} />
+            <DistrictLabels districts={districts} colorBy={colorBy} onSelect={setSelectedId} />
             <FlyTo point={selectedLabel ? [selectedLabel.lat, selectedLabel.lon] : null} zoom={15} />
           </>
         )}
@@ -158,8 +161,8 @@ type DistrictProps = { id: number; score: number; done_pct: number };
 function districtStyle(p: DistrictProps, selected: boolean, colorBy: ColorBy): L.PathOptions {
   const fillColor = colorBy === "done" ? doneColor(p.done_pct) : scoreColor(p.score);
   return selected
-    ? { fillColor, fillOpacity: 0.75, color: "#18181b", weight: 3, opacity: 1 }
-    : { fillColor, fillOpacity: colorBy === "done" ? 0.65 : 0.5, color: "#ffffff", weight: 0.8, opacity: 0.9 };
+    ? { fillColor, fillOpacity: 0.9, color: "#18181b", weight: 3, opacity: 1 }
+    : { fillColor, fillOpacity: colorBy === "done" ? 0.8 : 0.7, color: "#ffffff", weight: 0.8, opacity: 0.9 };
 }
 
 /** All districts in one canvas layer (thousands of polygons: drawn imperatively, restyled on selection). */
@@ -220,19 +223,36 @@ function DistrictLayer({
 
 const labelIcons = new Map<string, L.DivIcon>();
 
-function labelIcon(score: number, donePct: number): L.DivIcon {
-  const key = `${Math.round(score)}|${Math.round(donePct)}`;
+function cachedIcon(key: string, html: string): L.DivIcon {
   let icon = labelIcons.get(key);
   if (!icon) {
-    const done = donePct > 0 ? `<small>· ${Math.round(donePct)} %</small>` : "";
-    icon = L.divIcon({ className: "", html: `<div class="district-label">${Math.round(score)}${done}</div>`, iconSize: [0, 0] });
+    icon = L.divIcon({ className: "", html: `<div class="district-label">${html}</div>`, iconSize: [0, 0] });
     labelIcons.set(key, icon);
   }
   return icon;
 }
 
-/** Score (and share of doors done, when some were) on each district in view, once zoomed in. */
-function DistrictLabels({ districts, onSelect }: { districts: MapDistrict[]; onSelect: (id: number) => void }) {
+/** "Score" mode: score (· % done, when some were). "% fait" mode: French voters, or done / French voters. */
+function labelIcon(d: MapDistrict, colorBy: ColorBy): L.DivIcon {
+  if (colorBy === "done") {
+    const text = d.n_done > 0 ? `${d.n_done}/${d.n_total}` : `${d.n_total}`;
+    return cachedIcon(`done|${text}`, text);
+  }
+  const score = Math.round(d.score);
+  const done = Math.round(d.done_pct);
+  return cachedIcon(`score|${score}|${done}`, `${score}${done > 0 ? `<small>· ${done} %</small>` : ""}`);
+}
+
+/** Label on each district in view, once zoomed in (see `labelIcon`). */
+function DistrictLabels({
+  districts,
+  colorBy,
+  onSelect,
+}: {
+  districts: MapDistrict[];
+  colorBy: ColorBy;
+  onSelect: (id: number) => void;
+}) {
   const map = useMap();
   const [view, setView] = useState(() => ({ zoom: map.getZoom(), bounds: map.getBounds() }));
   useMapEvents({ moveend: () => setView({ zoom: map.getZoom(), bounds: map.getBounds() }) });
@@ -248,7 +268,7 @@ function DistrictLabels({ districts, onSelect }: { districts: MapDistrict[]; onS
         <Marker
           key={d.id}
           position={[d.label!.lat, d.label!.lon]}
-          icon={labelIcon(d.score, d.done_pct)}
+          icon={labelIcon(d, colorBy)}
           eventHandlers={{ click: () => onSelect(d.id) }}
         />
       ))}
@@ -321,7 +341,7 @@ function OverviewSheet({
   topOnly: boolean;
   onTopOnly: (on: boolean) => void;
 }) {
-  const best = data.districts.slice(0, 3); // already sorted by score
+  const best = data.districts.slice(0, BEST_LISTED); // already sorted by score
   const shown = topOnly ? Math.min(TOP_N, data.districts.length) : data.districts.length;
   return (
     <Sheet
@@ -360,8 +380,9 @@ function OverviewSheet({
       </div>
 
 
-      <SectionTitle>Meilleurs scores</SectionTitle>
-      <div className="space-y-2">
+      <SectionTitle>{`${best.length} meilleurs scores`}</SectionTitle>
+      {/* Three rows high, scroll for the others. */}
+      <div className="-mx-1 max-h-[13.25rem] space-y-2 overflow-y-auto overscroll-contain px-1 py-px">
         {best.map((d) => (
           <button
             key={d.id}
@@ -371,7 +392,11 @@ function OverviewSheet({
             <ScoreBadge score={d.score} />
             <div className="min-w-0 flex-1">
               <p className="truncate font-semibold tracking-tight">{d.name}</p>
-              {d.done_pct > 0 && <p className="text-xs text-zinc-500 tabular-nums">{d.done_pct.toLocaleString("fr")} % des portes faites</p>}
+              <p className="text-xs text-zinc-500 tabular-nums">
+                {d.n_done > 0
+                  ? `${d.n_done}/${d.n_total} Français·es faits · ${d.done_pct.toLocaleString("fr")} %`
+                  : `${d.n_total} Français·e${d.n_total > 1 ? "s" : ""}`}
+              </p>
             </div>
             <ChevronRight className="size-5 shrink-0 text-zinc-300" />
           </button>
@@ -511,15 +536,19 @@ function DistrictSheet({ id }: { id: number }) {
         </Card>
       )}
 
-      <SectionTitle>Population (Zensus 2022)</SectionTitle>
+      <SectionTitle>Français·es de la liste</SectionTitle>
+      <div className="grid grid-cols-2 gap-2">
+        <Metric label="Densité" value={d.density != null ? `${d.density.toLocaleString("fr")} /km²` : "—"} />
+        <Metric label="18–29 ans" value={formatPct(d.share_18_29 != null ? d.share_18_29 * 100 : null)} />
+        <Metric label="65 ans et plus" value={formatPct(d.share_65_plus != null ? d.share_65_plus * 100 : null)} />
+      </div>
+
+      <SectionTitle>Population</SectionTitle>
       {d.population == null ? (
-        <p className="text-sm text-zinc-500">Données du recensement non chargées pour cette zone.</p>
+        <p className="text-sm text-zinc-500">Données de population non chargées pour cette zone.</p>
       ) : (
         <div className="grid grid-cols-2 gap-2">
           <Metric label="Habitant·es" value={d.population.toLocaleString("fr")} />
-          <Metric label="Densité" value={d.density != null ? `${d.density.toLocaleString("fr")} /km²` : "—"} />
-          <Metric label="18–29 ans" value={formatPct(d.share_18_29 != null ? d.share_18_29 * 100 : null)} />
-          <Metric label="65 ans et plus" value={formatPct(d.share_65_plus != null ? d.share_65_plus * 100 : null)} />
           <Metric label="Étranger·es" value={formatPct(d.share_foreign != null ? d.share_foreign * 100 : null)} />
           <Metric
             label="Loyer net moyen"
@@ -761,7 +790,7 @@ function ImportSheet({
 
   if (job?.status === "running")
     return (
-      <Sheet title="Import en cours" subtitle="Téléchargement des fichiers, recensement et calcul des scores." locate={false}>
+      <Sheet title="Import en cours" subtitle="Téléchargement des fichiers et calcul des scores." locate={false}>
         <div className="flex items-center gap-3 rounded-2xl bg-zinc-50 p-4 text-sm text-zinc-600 ring-1 ring-zinc-950/5">
           <Spinner className="size-5 text-brand-600" />
           Ça prend en général moins d'une minute. Tu peux quitter cette page.

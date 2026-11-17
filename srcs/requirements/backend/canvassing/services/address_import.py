@@ -34,7 +34,7 @@ from django.utils import timezone
 from accounts.models import Organization
 from canvassing.addressutils import AddressNotGeolocated, sanitize_address
 from canvassing.models import Address, AddressImport, GeocodeCache, Status, address_key
-from canvassing.services import geocoding
+from canvassing.services import geocoding, scoring
 
 log = logging.getLogger(__name__)
 
@@ -412,6 +412,8 @@ def commit(organization: Organization, plan: Plan) -> ImportReport:
     # Release reservations so that a re-enabled address does not come back stuck "in progress".
     disabled.filter(status=Status.PLANNED).update(status=Status.TO_VISIT, visit_planned_at=None, visit_planned_by=None)
     disabled.update(disabled_at=timezone.now())
+    # The zones' density counts the French voters of the list: it changed with it.
+    scoring.rescore_organization(organization)
     return plan.report
 
 

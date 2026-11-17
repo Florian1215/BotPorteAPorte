@@ -41,10 +41,14 @@ LOGO_MAX_BYTES = 20 * 1024 * 1024
 
 
 def with_counts(queryset):
-    real_members = Q(members__is_active=True) & ~Q(members__role=Role.ADMIN) & Q(members__is_superuser=False)
+    active = Q(members__is_active=True)
+    # Admins attached to the organization count as members (they are listed with them).
+    is_admin = Q(members__role=Role.ADMIN) | Q(members__is_superuser=True)
     return queryset.annotate(
-        n_members=Count("members", filter=real_members & Q(members__is_approved=True)),
-        n_pending=Count("members", filter=real_members & Q(members__is_approved=False, members__suspended_at__isnull=True)),
+        n_members=Count("members", filter=active & (Q(members__is_approved=True) | is_admin)),
+        n_pending=Count(
+            "members", filter=active & ~is_admin & Q(members__is_approved=False, members__suspended_at__isnull=True)
+        ),
     )
 
 

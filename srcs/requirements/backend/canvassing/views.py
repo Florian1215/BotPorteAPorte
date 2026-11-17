@@ -514,9 +514,11 @@ class OrganizationOverviewView(CanvasserView):
             .annotate(n=Count("id"))
             .order_by()
         )
-        # Every door knocked by anyone in the organization (one feedback = one door, "absent" included).
+        # Every door knocked by anyone in the organization for the current election
+        # (one feedback = one door, "absent" included).
+        election = Election.current()
         visits = dict(
-            Visit.objects.filter(address__organization_id=request.user.organization_id)
+            Visit.objects.filter(address__organization_id=request.user.organization_id, election=election)
             .values_list("result")
             .annotate(n=Count("id"))
             .order_by()
@@ -527,6 +529,7 @@ class OrganizationOverviewView(CanvasserView):
                 "by_status": {s.name.lower(): counts.get(s.value, 0) for s in Status},
                 "doors_knocked": sum(visits.values()),
                 "doors_by_result": {r.value: visits.get(r.value, 0) for r in VisitResult},
+                "election": election.name if election else None,
             }
         )
 

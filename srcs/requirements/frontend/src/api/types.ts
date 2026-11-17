@@ -255,6 +255,8 @@ export type OrganizationOverview = {
   total: number;
   doors_knocked: number;
   doors_by_result: Record<ResultValue, number>;
+  /** Current election (the doors knocked only count its visits), null when none is set. */
+  election: string | null;
   by_status: Record<
     "to_visit" | "planned" | "failure" | "commitment_to_vote" | "good_conversation" | "do_not_contact",
     number

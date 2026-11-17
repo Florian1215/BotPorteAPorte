@@ -151,7 +151,7 @@ function percent(value: number, total: number): string {
   return p < 1 ? "<1 %" : `${Math.round(p)} %`;
 }
 
-/** Every door knocked in the organization = 100 %, one color per feedback. Tap for the details. */
+/** Every door knocked in the organization for the current election = 100 %, one color per feedback. Tap for the details. */
 function TotalBar({ overview }: { overview: OrganizationOverview }) {
   const [open, setOpen] = useState(false);
   const knocked = overview.doors_knocked;
@@ -159,7 +159,9 @@ function TotalBar({ overview }: { overview: OrganizationOverview }) {
   return (
     <div className="pt-1">
       <div className="flex items-baseline justify-between gap-2">
-        <span className="min-w-0 truncate text-[13px] font-semibold text-zinc-500">Portes frappées par toute l'organisation</span>
+        <span className="min-w-0 truncate text-[13px] font-semibold text-zinc-500">
+          Portes frappées{overview.election ? ` · ${overview.election}` : " par toute l'organisation"}
+        </span>
         <span className="shrink-0 text-sm font-semibold tabular-nums">{knocked.toLocaleString("fr")}</span>
       </div>
 

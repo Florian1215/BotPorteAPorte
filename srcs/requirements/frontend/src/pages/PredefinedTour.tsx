@@ -1,6 +1,6 @@
 import type { Feature } from "geojson";
-import { ChevronRight, LocateFixed, MapPinned, Sparkles } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Check, ChevronDown, ChevronRight, LocateFixed, MapPinned, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { GeoJSON } from "react-leaflet";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
@@ -133,32 +133,13 @@ export default function PredefinedTour() {
           half
           title="Tournée préparée"
           subtitle={
-            origin === undefined ? undefined : origin ? (
-              <div className="space-y-2">
-                <p>Les 10 meilleures zones autour de toi</p>
-                <div className="flex gap-1.5" role="radiogroup" aria-label="Rayon de recherche">
-                  {RADII_KM.map((km) => (
-                    <button
-                      key={km}
-                      type="button"
-                      role="radio"
-                      aria-checked={radius === km}
-                      onClick={() => pickRadius(km)}
-                      className={`flex-1 rounded-full py-1.5 text-xs font-semibold tabular-nums ring-1 ${
-                        radius === km
-                          ? "bg-brand-600 text-white ring-brand-600"
-                          : "bg-white text-zinc-700 ring-zinc-950/10 active:bg-zinc-50"
-                      }`}
-                    >
-                      {km} km
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              "Les 10 meilleures zones (position indisponible)"
-            )
+            origin === undefined
+              ? undefined
+              : origin
+                ? "Les 10 meilleures zones autour de toi"
+                : "Les 10 meilleures zones (position indisponible)"
           }
+          action={origin && <RadiusPicker value={radius} onChange={pickRadius} />}
         >
           {origin === undefined && <LocationStatus geo={geo} onRetry={geo.retry} />}
           {origin !== undefined && !areas && !error && <Loading />}
@@ -222,5 +203,64 @@ export default function PredefinedTour() {
         </Sheet>
       )}
     </>
+  );
+}
+
+/** Search radius: one tag in the corner of the sheet, opening the list of choices. */
+function RadiusPicker({ value, onChange }: { value: number; onChange: (km: number) => void }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+
+  // Close when tapping anywhere else.
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: PointerEvent) => {
+      if (!root.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [open]);
+
+  return (
+    <div ref={root} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="Rayon de recherche"
+        className="flex items-center gap-1 rounded-full bg-brand-600 py-1.5 pr-2 pl-3 text-xs font-semibold text-white tabular-nums active:opacity-90"
+      >
+        {value} km
+        <ChevronDown className={`size-3.5 transition-transform ${open ? "rotate-180" : ""}`} strokeWidth={2.5} />
+      </button>
+      {open && (
+        <ul
+          role="listbox"
+          aria-label="Rayon de recherche"
+          className="absolute top-full right-0 z-10 mt-1.5 w-24 overflow-hidden rounded-2xl bg-white py-1 shadow-float ring-1 ring-zinc-950/10"
+        >
+          {RADII_KM.map((km) => (
+            <li key={km}>
+              <button
+                type="button"
+                role="option"
+                aria-selected={km === value}
+                onClick={() => {
+                  onChange(km);
+                  setOpen(false);
+                }}
+                className={`flex w-full items-center justify-between px-3 py-2 text-sm tabular-nums active:bg-zinc-50 ${
+                  km === value ? "font-semibold text-brand-700" : "text-zinc-700"
+                }`}
+              >
+                {km} km
+                {km === value && <Check className="size-4" strokeWidth={2.5} />}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

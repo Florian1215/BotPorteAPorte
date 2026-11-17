@@ -160,7 +160,7 @@ function TotalBar({ overview }: { overview: OrganizationOverview }) {
     <div className="pt-1">
       <div className="flex items-baseline justify-between gap-2">
         <span className="min-w-0 truncate text-[13px] font-semibold text-zinc-500">
-          Portes frappées{overview.election ? ` · ${overview.election}` : " par toute l'organisation"}
+          Portes frappées
         </span>
         <span className="shrink-0 text-sm font-semibold tabular-nums">{knocked.toLocaleString("fr")}</span>
       </div>

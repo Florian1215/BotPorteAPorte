@@ -5,7 +5,7 @@ import pandas as pd
 from django.contrib.gis.geos import MultiPolygon, Polygon
 from django.test import SimpleTestCase, TestCase
 
-from accounts.models import Organization
+from accounts.models import Organization, VoterList
 
 from .models import District
 from .services import districts as ds
@@ -194,7 +194,7 @@ def fake_geocode(addresses, country_code, progress=None):
 @mock.patch("canvassing.services.geocoding.geocode_many", side_effect=fake_geocode)
 class LecImportTests(TestCase):
     def setUp(self):
-        self.organization = Organization.objects.create(code="lec", name="LEC", country_code="DE")
+        self.voter_list = VoterList.objects.create(name="LEC test", country_code="DE")
 
     def test_read_lec(self, _):
         entries, report = address_import.read_file(lec_file(PEOPLE), "liste.xls", "DE")
@@ -214,27 +214,27 @@ class LecImportTests(TestCase):
             address_import.read_file(buffer.getvalue(), "autre.xlsx", "DE")
 
     def test_import_then_reimport_with_a_move_and_a_departure(self, geocode):
-        report = address_import.run_import(self.organization, lec_file(PEOPLE), "liste.xls")
+        report = address_import.run_import(self.voter_list, lec_file(PEOPLE), "liste.xls")
         self.assertEqual((report.new, report.to_geocode), (2, 2))
-        martin = Address.objects.get(organization=self.organization, name="MARTIN")
+        martin = Address.objects.get(voter_list=self.voter_list, name="MARTIN")
         self.assertEqual(martin.birth_year, 1990)
         self.assertNotIn("x@example.org", str(Address.objects.values().first()))
 
         moved = [PEOPLE[0][:4] + ["Kastanienallee 7", "10435 Berlin"]]  # Camille moved, Sacha left the list
-        preview = address_import.preview(self.organization, lec_file(moved), "liste.xls")
+        preview = address_import.preview(self.voter_list, lec_file(moved), "liste.xls")
         self.assertEqual((preview.new, preview.existing, preview.moved, preview.disabled), (0, 1, 1, 1))
         self.assertEqual(preview.to_geocode, 0)  # that address was already located once
 
-        address_import.run_import(self.organization, lec_file(moved), "liste.xls")
+        address_import.run_import(self.voter_list, lec_file(moved), "liste.xls")
         martin.refresh_from_db()
         self.assertEqual(martin.zip_code, "10435")
         self.assertIsNotNone(Address.all_objects.get(name="DURAND").disabled_at)
 
     def test_not_geocoded_people_are_left_out(self, geocode):
         geocode.side_effect = lambda addresses, *a, **k: {k: GeocodeCache(query=k, found=False) for k in addresses}
-        report = address_import.run_import(self.organization, lec_file(PEOPLE[:1]), "liste.xls")
+        report = address_import.run_import(self.voter_list, lec_file(PEOPLE[:1]), "liste.xls")
         self.assertEqual((report.new, report.not_geocoded), (0, 1))
-        self.assertFalse(Address.objects.filter(organization=self.organization).exists())
+        self.assertFalse(Address.objects.filter(voter_list=self.voter_list).exists())
 
 
 class DistrictInfoTests(TestCase):
@@ -246,7 +246,8 @@ class DistrictInfoTests(TestCase):
         from accounts.models import User
         from canvassing.models import Address, Election, SocialArea, Status, Visit, VisitResult
 
-        self.organization = Organization.objects.create(code="info", name="Info")
+        self.voter_list = VoterList.objects.create(name="LEC info")
+        self.organization = Organization.objects.create(code="info", name="Info", voter_list=self.voter_list)
         self.district = District.objects.create(
             organization=self.organization, code="1", name="Nord", geometry=MultiPolygon(square(0, 0), srid=4326)
         )
@@ -259,7 +260,7 @@ class DistrictInfoTests(TestCase):
 
         def person(name, status=Status.TO_VISIT, age=None, x=0.005):
             return Address.objects.create(
-                organization=self.organization, name=name, address="1 rue", zip_code="10115", city="Berlin",
+                voter_list=self.voter_list, name=name, address="1 rue", zip_code="10115", city="Berlin",
                 location=Point(x, 0.005, srid=4326), status=status, birth_year=year - age if age else None,
             )
 
@@ -378,7 +379,7 @@ class BotImportTests(TestCase):
         self.assertIn("Nouvelles adresses : 3", output)
         self.assertIn("1 dans le fichier", output)
         self.assertIn("1 promesses de vote pour l'élection consulaire 2026", output)
-        martin = Address.objects.get(organization=self.berlin, name="MARTIN")
+        martin = Address.objects.get(voter_list__organizations=self.berlin, name="MARTIN")
         self.assertEqual(martin.status, Status.COMMITMENT_TO_VOTE)  # the duplicate with a visit was kept
         visit = Visit.objects.get(address=martin)
         self.assertEqual((visit.election.name, visit.created_at.day), ("Élection consulaire 2026", 10))
@@ -386,7 +387,7 @@ class BotImportTests(TestCase):
         self.assertEqual(durand.status, Status.TO_VISIT)  # absent → to visit again
         self.assertEqual(Visit.objects.get(address=durand).absent_detail, "leaflet")  # status 7
         vienna = Organization.objects.get(code="vienne-insoumise")  # created
-        self.assertEqual((vienna.country_code, vienna.addresses.count()), ("AT", 1))
+        self.assertEqual((vienna.country_code, vienna.voter_list.addresses.count()), ("AT", 1))
 
         again = self.run_import()  # nothing added twice
         self.assertIn("Nouvelles adresses : 0", again)
@@ -499,6 +500,39 @@ class FuzzyGeocodingTests(SimpleTestCase):
         self.assertIn("Bayerische Straße", street_variants("Bayerischestraße"))
         self.assertIn("Freiberger Straße", street_variants("Freibergstraße"))
         self.assertIn("Rudolf-Breitscheid-Straße", street_variants("Rudolf Breitscheid Straße"))
+        # Flat after the house number (Austria: "Top", "Stiege"…; Germany: "DG", "Whg").
+        self.assertEqual(clean_number("4 b top 39"), "4b")
+        self.assertEqual(clean_number("3 top 11"), "3")
+        self.assertEqual(clean_number("3 DG"), "3")
+        self.assertEqual(clean_number("4 Whg 313"), "4")
+        self.assertEqual(clean_number("1 OT Hoppenrade"), "1")
+        self.assertEqual(clean_street("Hauptstrabe"), "Hauptstraße")
+        self.assertEqual(clean_street("c/o Manuela Jannarelli Westerfeldstr."), "Westerfeldstraße")
+        self.assertEqual(clean_street("Schachendorf Nr ."), "Schachendorf")
+        self.assertIn("Schönhauser Allee", street_variants("Schönhauserallee"))
+        self.assertIn("Otto-Bauer-Gasse", street_variants("Otto-Bauergasse"))
+        self.assertIn("Franz-Emrich-Gasse", street_variants("Franz Emrichgasse"))
+        self.assertEqual(street_variants("Panoramaweg"), ["Panoramaweg"])
+        self.assertIn("Lissabonallee", street_variants("Lissabon Allee"))
+        self.assertEqual(clean_street("Landstr.r Hauptstr."), "Landstraßer Hauptstraße")
+
+    def test_village_address_without_street(self):
+        """Austria: "Harbach 86" is a house of the village, with no street name."""
+        from canvassing.services import geocoding
+
+        class Location:
+            latitude, longitude = 47.17, 13.1
+            raw = {"address": {"hamlet": "Harbach", "house_number": "86", "postcode": "5630", "village": "Bad Hofgastein"}}
+
+        def fake(query, **kwargs):  # only the free-text search finds it
+            return Location() if isinstance(query, str) else None
+
+        addr = AddressNotGeolocated("", "", "Harbach", "86", "5630", "Bad Hofgastein")
+        location = geocoding.geocode_direct(addr, "AT", fake)
+        self.assertEqual(geocoding.location_to_fields(addr, location)["address"], "Harbach 86")
+
+        wrong_number = AddressNotGeolocated("", "", "Harbach", "12", "5630", "Bad Hofgastein")
+        self.assertIsNone(geocoding.geocode_direct(wrong_number, "AT", fake))
 
     def test_same_street(self):
         from canvassing.services.geocoding import same_street
@@ -531,7 +565,7 @@ class FuzzyGeocodingTests(SimpleTestCase):
                 self.raw = {"address": {"road": road, "house_number": number, "postcode": "12524", "city": "Berlin"}}
 
         def fake(query, **kwargs):  # only the right spelling exists
-            return Location("Pfarrwöhrde", "17") if query["street"] == "Pfarrwöhrde 17" else None
+            return Location("Pfarrwöhrde", "17") if isinstance(query, dict) and query["street"] == "Pfarrwöhrde 17" else None
 
         addr = AddressNotGeolocated("", "", "Pfarrwörde", "17", "12524", "BERLIN")
         self.assertIsNone(geocoding.geocode_direct(addr, "DE", fake))
@@ -571,10 +605,11 @@ class ClearResultTests(TestCase):
         from accounts.models import User
         from canvassing.models import Tour, TourStop
 
-        organization = Organization.objects.create(code="clear", name="Clear")
+        voter_list = VoterList.objects.create(name="LEC clear")
+        organization = Organization.objects.create(code="clear", name="Clear", voter_list=voter_list)
         user = User.objects.create_user(email="m@demo.test", organization=organization, is_approved=True)
         address = Address.objects.create(
-            organization=organization, name="X", address="Rue 1", zip_code="10115", city="Berlin",
+            voter_list=voter_list, name="X", address="Rue 1", zip_code="10115", city="Berlin",
             location=Point(13.4, 52.5), status=Status.PLANNED, visit_planned_by=user,
         )
         tour = Tour.objects.create(user=user, organization=organization, kind=Tour.Kind.FREE, status=Tour.TourStatus.ACTIVE, start_point=Point(13.4, 52.5))
@@ -608,3 +643,58 @@ class BrevoBackendTests(SimpleTestCase):
         self.assertEqual(payload["sender"], {"email": "no-reply@exemple.org", "name": "Porte-à-porte"})
         self.assertEqual((payload["to"], payload["htmlContent"]), ([{"email": "a@exemple.org"}], "<p>HTML</p>"))
         self.assertEqual(post.call_args.kwargs["headers"]["api-key"], "k")
+
+
+class SharedVoterListTests(TestCase):
+    """Two organizations on one voter list: shared addresses, each one sees those around its city only;
+    only the site admins manage the lists."""
+
+    def setUp(self):
+        from django.contrib.gis.geos import Point
+
+        from accounts.models import Role, User
+
+        self.voter_list = VoterList.objects.create(name="LEC Berlin", country_code="DE")
+        self.berlin = Organization.objects.create(
+            code="berlin", name="Berlin", city="Berlin", city_lat=52.52, city_lon=13.40, voter_list=self.voter_list
+        )
+        self.leipzig = Organization.objects.create(
+            code="leipzig", name="Leipzig", city="Leipzig", city_lat=51.34, city_lon=12.37, voter_list=self.voter_list
+        )
+        for name, (lat, lon) in {"BERLINOIS": (52.53, 13.41), "LEIPZIGOIS": (51.35, 12.38)}.items():
+            Address.objects.create(
+                voter_list=self.voter_list, name=name, address="Rue 1", zip_code="10115", city="X", location=Point(lon, lat)
+            )
+        self.manager = User.objects.create_user(
+            email="resp@demo.test", organization=self.leipzig, role=Role.MANAGER, is_approved=True
+        )
+        self.admin = User.objects.create_user(email="admin@demo.test", role=Role.ADMIN, is_approved=True)
+
+    def test_each_organization_sees_the_addresses_around_its_city(self):
+        from canvassing.services.scope import organization_addresses
+
+        self.assertEqual(list(organization_addresses(self.berlin).values_list("name", flat=True)), ["BERLINOIS"])
+        self.assertEqual(list(organization_addresses(self.leipzig).values_list("name", flat=True)), ["LEIPZIGOIS"])
+        self.leipzig.radius_km = 200
+        self.assertEqual(organization_addresses(self.leipzig).count(), 2)
+
+    def test_only_site_admins_manage_voter_lists(self):
+        from rest_framework.test import APIClient
+
+        client = APIClient()
+        client.force_authenticate(self.manager)
+        self.assertEqual(client.get("/api/manage/voter-lists/").status_code, 403)
+        self.assertEqual(client.get(f"/api/manage/voter-lists/{self.voter_list.id}/addresses/import/").status_code, 403)
+        other = VoterList.objects.create(name="LEC Munich")
+        response = client.patch("/api/manage/organizations/leipzig/", {"voter_list": other.id}, format="json")
+        self.assertEqual(response.status_code, 403)
+
+        client.force_authenticate(self.admin)
+        lists = client.get("/api/manage/voter-lists/").json()
+        berlin = next(v for v in lists if v["name"] == "LEC Berlin")
+        self.assertEqual((berlin["n_active"], {o["code"] for o in berlin["organizations"]}), (2, {"berlin", "leipzig"}))
+        response = client.patch("/api/manage/organizations/leipzig/", {"voter_list": other.id}, format="json")
+        self.assertEqual((response.status_code, response.json()["voter_list_name"]), (200, "LEC Munich"))
+        # A list with addresses cannot be deleted (their visits would go with them).
+        self.assertEqual(client.delete(f"/api/manage/voter-lists/{self.voter_list.id}/").status_code, 400)
+        self.assertEqual(client.delete(f"/api/manage/voter-lists/{other.id}/").status_code, 400 if other.addresses.exists() else 204)

@@ -61,17 +61,12 @@ superuser	:
 			$(MANAGE) createsuperuser
 shell		:
 			$(MANAGE) shell
-# Fake addresses around Berlin + demo account (demo / demo-canvassing)
 seed		:
 			$(MANAGE) seed_demo
-# make import FILE=liste_DE.xlsx ORG=lec-berlin-2024   (the file must be inside srcs/requirements/backend/)
+
 import		:
-			$(MANAGE) import_addresses $(FILE) --organization $(ORG)
-# Census 2022 grid (age, density, rent) used to score polling districts. Once per site; BBOX to limit the area:
-# make load-zensus BBOX=13.08,52.33,13.77,52.68   (Berlin)
-load-zensus:
-			$(MANAGE) load_zensus $(if $(BBOX),--bbox $(BBOX))
-# Share of low-income residents per neighbourhood (Berlin MSS 2023), after load-zensus.
+			$(MANAGE) import_addresses $(FILE) $(if $(LIST),--list "$(LIST)",--organization $(ORG))
+
 load-social:
 			$(MANAGE) load_social_index
 

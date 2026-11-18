@@ -20,13 +20,13 @@ class AddressAdminForm(forms.ModelForm):
         cleaned = super().clean()
         if self.errors:
             return cleaned
-        located_fields = ("address", "zip_code", "city", "organization")
+        located_fields = ("address", "zip_code", "city", "voter_list")
         if self.instance.pk and self.instance.location and not any(f in self.changed_data for f in located_fields):
             return cleaned
-        organization = cleaned.get("organization")
+        voter_list = cleaned.get("voter_list")
         try:
             position = geocode_address(
-                cleaned["address"], cleaned["zip_code"], cleaned["city"], organization.country_code if organization else None
+                cleaned["address"], cleaned["zip_code"], cleaned["city"], voter_list.country_code if voter_list else None
             )
         except GeocodingUnavailable:
             raise forms.ValidationError("Le service de géocodage est indisponible, réessaie dans un instant.") from None
@@ -41,8 +41,8 @@ class AddressAdminForm(forms.ModelForm):
 @admin.register(Address)
 class AddressAdmin(admin.ModelAdmin):
     form = AddressAdminForm
-    list_display = ["name", "first_names", "address", "zip_code", "city", "status", "organization", "disabled_at"]
-    list_filter = ["status", "organization", ("disabled_at", admin.EmptyFieldListFilter)]
+    list_display = ["name", "first_names", "address", "zip_code", "city", "status", "voter_list", "disabled_at"]
+    list_filter = ["status", "voter_list", ("disabled_at", admin.EmptyFieldListFilter)]
     search_fields = ["name", "address", "city", "zip_code"]
     raw_id_fields = ["visit_planned_by"]
     readonly_fields = ["position", "source_key"]

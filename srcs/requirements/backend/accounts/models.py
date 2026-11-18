@@ -9,11 +9,33 @@ from django.utils import timezone
 from django.utils.crypto import salted_hmac
 
 
-class Organization(models.Model):
-    """A local unit (groupe d'action) running its own canvassing: its own voter list, areas, tours and members.
+class VoterList(models.Model):
+    """A consular voter list (LEC), imported and managed by the site admins only.
 
-    Replaces the per-bot RLS scope of the Telegram bot: every address, area and tour belongs to one organization,
-    and a militant only ever sees the data of their own organization.
+    Several organizations can depend on the same list (e.g. the groups of Berlin and Leipzig both canvass people
+    of the Berlin consulate's list): its addresses, and their visits, are shared. Each organization only works on
+    the addresses of its list around its city (`Organization.radius_km`).
+    """
+
+    name = models.CharField("nom", max_length=128)
+    country_code = models.CharField(
+        "pays", max_length=2, default="DE", help_text="Code pays ISO 3166-1 alpha-2 des adresses, pour le géocodage."
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+        verbose_name = "liste électorale consulaire (LEC)"
+        verbose_name_plural = "listes électorales consulaires (LEC)"
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class Organization(models.Model):
+    """A local unit (groupe d'action) running its own canvassing: its areas, tours and members.
+
+    The addresses come from the voter list (LEC) it depends on, limited to `radius_km` around its city.
     """
 
     code = models.SlugField(max_length=64, unique=True)
@@ -23,7 +45,14 @@ class Organization(models.Model):
     city_lat = models.FloatField(null=True, blank=True)
     city_lon = models.FloatField(null=True, blank=True)
     country_code = models.CharField(
-        "pays", max_length=2, default="DE", help_text="Code pays ISO 3166-1 alpha-2 (déduit de la ville), pour le géocodage."
+        "pays", max_length=2, default="DE", help_text="Code pays ISO 3166-1 alpha-2 (déduit de la ville)."
+    )
+    # Voter list the organization canvasses (chosen by a site admin), and how far from its city.
+    voter_list = models.ForeignKey(
+        VoterList, null=True, blank=True, on_delete=models.SET_NULL, related_name="organizations", verbose_name="LEC"
+    )
+    radius_km = models.PositiveIntegerField(
+        "rayon (km)", default=30, help_text="Adresses de la LEC prises en compte autour de la ville de l'organisation."
     )
     # Logo stored in the database (small image) and served by /api/auth/organizations/<code>/logo/:
     # no media volume to share between containers.

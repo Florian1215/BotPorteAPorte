@@ -30,6 +30,7 @@ from .serializers import (
 from .services import districts as district_service
 from .services import elections as election_service
 from .services import scoring
+from .services.scope import organization_addresses
 from .services import tours as tour_service
 from .services.geo import bbox_around
 
@@ -422,7 +423,8 @@ class NearbyAddressesView(CanvasserView):
         lat, lon, radius_km = (serializer.validated_data[k] for k in ("lat", "lon", "radius_km"))
         bbox = Polygon.from_bbox(bbox_around([(lat, lon)], radius_km))
         qs = (
-            Address.objects.filter(organization_id=request.user.organization_id, status=Status.TO_VISIT, location__within=bbox)
+            organization_addresses(request.user.organization)
+            .filter(status=Status.TO_VISIT, location__within=bbox)
             .alias(
                 near=RawSQL(
                     "ST_DWithin(location::geography, ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography, %s)",
@@ -517,7 +519,13 @@ class LeaderboardView(CanvasserView):
         if scope == "organizations":
             from accounts.models import Organization
 
-            orgs = Organization.objects.annotate(doors=Count("addresses__visits")).order_by("-doors", "name")
+            # Doors knocked on the addresses each organization works on (its list, around its city).
+            orgs = list(Organization.objects.all())
+            for o in orgs:
+                o.doors = Visit.objects.filter(
+                    address_id__in=organization_addresses(o, Address.all_objects.all()).values("id")
+                ).count()
+            orgs.sort(key=lambda o: (-o.doors, o.name))
             members = dict(
                 organization_members_all().values_list("organization_id").annotate(n=Count("id")).order_by()
             )
@@ -556,8 +564,9 @@ class LeaderboardView(CanvasserView):
 class OrganizationOverviewView(CanvasserView):
     def get(self, request):
         """Progress of the whole organization (shown on the home page)."""
+        organization = request.user.organization
         counts = dict(
-            Address.objects.filter(organization_id=request.user.organization_id)
+            organization_addresses(organization)
             .values_list("status")
             .annotate(n=Count("id"))
             .order_by()
@@ -566,7 +575,10 @@ class OrganizationOverviewView(CanvasserView):
         # (one feedback = one door, "absent" included).
         election = Election.current()
         visits = dict(
-            Visit.objects.filter(address__organization_id=request.user.organization_id, election=election)
+            Visit.objects.filter(
+                address_id__in=organization_addresses(organization, Address.all_objects.all()).values("id"),
+                election=election,
+            )
             .values_list("result")
             .annotate(n=Count("id"))
             .order_by()

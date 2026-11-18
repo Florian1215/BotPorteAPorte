@@ -22,6 +22,7 @@ import Stats from "./pages/Stats";
 import TourPage from "./pages/TourPage";
 import VerifyEmail from "./pages/VerifyEmail";
 import VerifyLink from "./pages/VerifyLink";
+import VoterLists, { VoterListDetail } from "./pages/VoterLists";
 
 function RequireCanvasser({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
@@ -102,6 +103,22 @@ export default function App() {
               element={
                 <RequireRight allowed={(u) => u.is_site_admin}>
                   <OrganizationSettings />
+                </RequireRight>
+              }
+            />
+            <Route
+              path="lec"
+              element={
+                <RequireRight allowed={(u) => u.is_site_admin}>
+                  <VoterLists />
+                </RequireRight>
+              }
+            />
+            <Route
+              path="lec/:id"
+              element={
+                <RequireRight allowed={(u) => u.is_site_admin}>
+                  <VoterListDetail />
                 </RequireRight>
               }
             />

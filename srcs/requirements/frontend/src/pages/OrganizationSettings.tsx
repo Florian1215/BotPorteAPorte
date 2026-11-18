@@ -1,11 +1,11 @@
-import { ArrowRightLeft, ChevronRight, ImagePlus, Save, Trash2, Users } from "lucide-react";
+import { ArrowRightLeft, ChevronRight, FileSpreadsheet, ImagePlus, Save, Trash2, Users } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 
 import { api, errorMessage } from "../api/client";
 import type { CityFields, OrganizationAdmin, User } from "../api/types";
-import AddressImport from "../components/AddressImport";
 import CityPicker from "../components/CityPicker";
+import VoterListPicker, { type VoterListChoice } from "../components/VoterListPicker";
 import { OrgLogo } from "../components/organization";
 import { Alert, Button, Card, Field, IconTile, inputClass, Loading, SectionTitle, Sheet } from "../components/ui";
 import { useAuth } from "../context/AuthContext";
@@ -17,6 +17,7 @@ export default function OrganizationSettings() {
   const code = params.code ?? user?.organization?.code;
   const [organization, setOrganization] = useState<OrganizationAdmin | null>(null);
   const [form, setForm] = useState<{ name: string } & CityFields>({ name: "", city: "", city_lat: null, city_lon: null, country_code: "" });
+  const [lec, setLec] = useState<VoterListChoice>({ voter_list: null, radius_km: 30 });
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -29,6 +30,7 @@ export default function OrganizationSettings() {
       .then((o) => {
         setOrganization(o);
         setForm({ name: o.name, city: o.city, city_lat: o.city_lat, city_lon: o.city_lon, country_code: o.country_code });
+        setLec({ voter_list: o.voter_list, radius_km: o.radius_km });
       })
       .catch((e) => setError(errorMessage(e)));
   }, [code]);
@@ -58,6 +60,11 @@ export default function OrganizationSettings() {
     // City fields only once a city was picked (older organizations may not have one yet).
     const body = form.city ? form : { name: form.name };
     run("save", () => api(`/manage/organizations/${code}/`, { method: "PATCH", body }), "Modifications enregistrées.");
+  };
+
+  const saveLec = (e: FormEvent) => {
+    e.preventDefault();
+    run("lec", () => api(`/manage/organizations/${code}/`, { method: "PATCH", body: lec }), "LEC enregistrée.");
   };
 
   const upload = (file: File) => {
@@ -145,7 +152,29 @@ export default function OrganizationSettings() {
           </Card>
 
           <SectionTitle>Adresses à visiter</SectionTitle>
-          <AddressImport organization={organization.code} />
+          {user?.is_site_admin ? (
+            <form onSubmit={saveLec} className="space-y-3">
+              <VoterListPicker value={lec} onChange={setLec} />
+              <p className="text-xs text-zinc-500">
+                Les adresses de la LEC à moins de {lec.radius_km} km de la ville. La liste s'importe depuis le menu « LEC ».
+              </p>
+              <Button type="submit" variant="secondary" className="w-full" icon={Save} loading={busy === "lec"}>
+                Enregistrer la LEC
+              </Button>
+            </form>
+          ) : (
+            <Card className="flex items-center gap-3 p-3.5">
+              <IconTile icon={FileSpreadsheet} />
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-semibold tracking-tight">{organization.voter_list_name ?? "Aucune LEC"}</p>
+                <p className="text-sm text-zinc-500">
+                  {organization.voter_list_name
+                    ? `Adresses à moins de ${organization.radius_km} km de ${organization.city || "la ville"}. Gérée par les admins du site.`
+                    : "Un·e admin du site doit rattacher l'organisation à une LEC."}
+                </p>
+              </div>
+            </Card>
+          )}
 
           <SectionTitle>Informations</SectionTitle>
           <form onSubmit={save} className="space-y-4">

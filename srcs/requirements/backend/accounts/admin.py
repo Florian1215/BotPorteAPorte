@@ -1,11 +1,17 @@
 from django.contrib import admin, messages
 
-from .models import LoginCode, Organization, User
+from .models import LoginCode, Organization, User, VoterList
+
+
+@admin.register(VoterList)
+class VoterListAdmin(admin.ModelAdmin):
+    list_display = ["name", "country_code", "created_at"]
+    search_fields = ["name"]
 
 
 @admin.register(Organization)
 class OrganizationAdmin(admin.ModelAdmin):
-    list_display = ["name", "code", "city", "country_code", "created_at"]
+    list_display = ["name", "code", "city", "voter_list", "radius_km", "created_at"]
     search_fields = ["name", "code"]
     prepopulated_fields = {"code": ["name"]}
 

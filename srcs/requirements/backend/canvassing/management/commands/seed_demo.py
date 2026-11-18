@@ -5,7 +5,7 @@ import random
 from django.contrib.gis.geos import Point
 from django.core.management.base import BaseCommand
 
-from accounts.models import Organization, Role, User
+from accounts.models import Organization, VoterList, Role, User
 from canvassing.models import Address
 
 CENTER = (52.5163, 13.4135)  # Berlin Mitte
@@ -29,9 +29,18 @@ class Command(BaseCommand):
     def handle(self, *args, count, reset, **options):
         if reset:
             Organization.objects.filter(code="demo-berlin").delete()
+            VoterList.objects.filter(name="LEC Démo Berlin").delete()
+        voter_list, _ = VoterList.objects.get_or_create(name="LEC Démo Berlin", defaults={"country_code": "DE"})
         organization, _ = Organization.objects.get_or_create(
             code="demo-berlin",
-            defaults={"name": "Démo Berlin", "country_code": "DE", "city": "Berlin", "city_lat": 52.5170, "city_lon": 13.3889},
+            defaults={
+                "name": "Démo Berlin",
+                "country_code": "DE",
+                "city": "Berlin",
+                "city_lat": 52.5170,
+                "city_lon": 13.3889,
+                "voter_list": voter_list,
+            },
         )
         rng = random.Random(42)
         addresses = []
@@ -42,7 +51,7 @@ class Command(BaseCommand):
             lon = CENTER[1] + r_km / (111.32 * math.cos(math.radians(CENTER[0]))) * math.cos(theta)
             addresses.append(
                 Address(
-                    organization=organization,
+                    voter_list=voter_list,
                     name=rng.choice(FAMILY),
                     first_names=f"{rng.choice(FIRST)} {rng.choice(FIRST)}",
                     address=f"{rng.choice(STREETS)} {rng.randint(1, 180)}",

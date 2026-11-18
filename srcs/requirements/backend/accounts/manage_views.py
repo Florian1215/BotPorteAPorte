@@ -22,11 +22,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from canvassing.models import Address, AddressImport
-from canvassing.services import address_import
+from canvassing.services import address_import, scoring
 
 from .emails import send_invitation
 from .images import InvalidImage, process_logo
-from .models import ROLE_RANK, LoginCode, Organization, Role, User
+from .models import ROLE_RANK, LoginCode, Organization, Role, User, VoterList
 from .permissions import CanValidate, IsSiteAdmin
 from .serializers import (
     MemberCreateSerializer,
@@ -34,6 +34,7 @@ from .serializers import (
     MemberUpdateSerializer,
     MeSerializer,
     OrganizationAdminSerializer,
+    VoterListSerializer,
 )
 
 # Upload size only bounded by nginx (20 MB): the image is resized server-side anyway.
@@ -221,9 +222,14 @@ class OrganizationAdminDetailView(APIView):
 
     def patch(self, request, code):
         organization = managed_organization(request, code)
+        if not request.user.is_site_admin and {"voter_list", "radius_km"} & set(request.data):
+            raise PermissionDenied("Seul·es les administrateur·rices du site choisissent la LEC d'une organisation.")
+        previous_list = organization.voter_list_id
         serializer = OrganizationAdminSerializer(organization, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        organization = serializer.save()
+        if organization.voter_list_id != previous_list:
+            scoring.rescore_organization(organization)  # the zones count the French voters of the list
         return Response(OrganizationAdminSerializer(managed_organization(request, code)).data)
 
 
@@ -256,20 +262,56 @@ class OrganizationLogoUploadView(APIView):
         return Response(OrganizationAdminSerializer(organization).data)
 
 
-# --------------------------------------------------------------------------- voter list
+# --------------------------------------------------------------------------- voter lists (LEC, site admins)
 
 
 IMPORT_MAX_BYTES = 20 * 1024 * 1024
 
 
-class OrganizationAddressesView(APIView):
-    def get(self, request, code):
-        organization = managed_organization(request, code)
-        counts = Address.all_objects.filter(organization=organization).aggregate(
-            active=Count("id", filter=Q(disabled_at__isnull=True)),
-            disabled=Count("id", filter=Q(disabled_at__isnull=False)),
+def voter_lists_with_counts():
+    return (
+        VoterList.objects.annotate(
+            n_active=Count("addresses", filter=Q(addresses__disabled_at__isnull=True)),
+            n_disabled=Count("addresses", filter=Q(addresses__disabled_at__isnull=False)),
         )
-        return Response(counts)
+        .prefetch_related("organizations")
+        .order_by("name")
+    )
+
+
+class VoterListListView(APIView):
+    permission_classes = [IsSiteAdmin]
+
+    def get(self, request):
+        return Response(VoterListSerializer(voter_lists_with_counts(), many=True).data)
+
+    def post(self, request):
+        serializer = VoterListSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        voter_list = serializer.save()
+        return Response(VoterListSerializer(voter_lists_with_counts().get(pk=voter_list.pk)).data, status=status.HTTP_201_CREATED)
+
+
+class VoterListDetailView(APIView):
+    permission_classes = [IsSiteAdmin]
+
+    def get(self, request, pk):
+        return Response(VoterListSerializer(get_object_or_404(voter_lists_with_counts(), pk=pk)).data)
+
+    def patch(self, request, pk):
+        voter_list = get_object_or_404(VoterList, pk=pk)
+        serializer = VoterListSerializer(voter_list, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(VoterListSerializer(voter_lists_with_counts().get(pk=pk)).data)
+
+    def delete(self, request, pk):
+        """Only an empty list: deleting addresses would delete their visits (statistics) too."""
+        voter_list = get_object_or_404(VoterList, pk=pk)
+        if Address.all_objects.filter(voter_list=voter_list).exists():
+            raise ValidationError({"detail": "Cette LEC contient des adresses : elle ne peut pas être supprimée."})
+        voter_list.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 STALE_IMPORT = timedelta(hours=6)
@@ -291,8 +333,8 @@ def address_import_to_dict(job: AddressImport | None) -> dict | None:
     }
 
 
-def last_address_import(organization) -> AddressImport | None:
-    job = AddressImport.objects.filter(organization=organization).first()
+def last_address_import(voter_list) -> AddressImport | None:
+    job = AddressImport.objects.filter(voter_list=voter_list).first()
     if job and job.status == AddressImport.ImportStatus.RUNNING and timezone.now() - job.created_at > STALE_IMPORT:
         job.status = AddressImport.ImportStatus.FAILED
         job.message = "L'import a été interrompu (redémarrage du serveur ?). Relance-le : les adresses déjà géocodées ne le seront pas une deuxième fois."
@@ -300,34 +342,47 @@ def last_address_import(organization) -> AddressImport | None:
     return job
 
 
-class OrganizationAddressImportView(APIView):
-    """Import the voter list: the consular list (.xls / .xlsx) or a JSON file.
+class VoterListAddressesView(APIView):
+    permission_classes = [IsSiteAdmin]
+
+    def get(self, request, pk):
+        voter_list = get_object_or_404(VoterList, pk=pk)
+        counts = Address.all_objects.filter(voter_list=voter_list).aggregate(
+            active=Count("id", filter=Q(disabled_at__isnull=True)),
+            disabled=Count("id", filter=Q(disabled_at__isnull=False)),
+        )
+        return Response(counts)
+
+
+class VoterListImportView(APIView):
+    """Import a voter list: the consular list (.xls / .xlsx) or a JSON file.
 
     POST `dry_run=1`: what would change (shown before confirming). POST: start the import in the background
     (the addresses have to be geocoded). GET: the last import, polled while it runs.
     """
 
+    permission_classes = [IsSiteAdmin]
     parser_classes = [MultiPartParser]
 
-    def get(self, request, code):
-        return Response(address_import_to_dict(last_address_import(managed_organization(request, code))))
+    def get(self, request, pk):
+        return Response(address_import_to_dict(last_address_import(get_object_or_404(VoterList, pk=pk))))
 
-    def post(self, request, code):
-        organization = managed_organization(request, code)
+    def post(self, request, pk):
+        voter_list = get_object_or_404(VoterList, pk=pk)
         upload = request.FILES.get("file")
         if upload is None:
             raise ValidationError({"file": "Choisis la liste électorale (.xls ou .xlsx)."})
         if upload.size > IMPORT_MAX_BYTES:
             raise ValidationError({"file": "Le fichier ne doit pas dépasser 20 Mo."})
-        running = last_address_import(organization)
+        running = last_address_import(voter_list)
         if running and running.status == AddressImport.ImportStatus.RUNNING:
-            raise ValidationError({"file": "Un import est déjà en cours pour cette organisation."})
+            raise ValidationError({"file": "Un import est déjà en cours pour cette LEC."})
         data = upload.read()
         dry_run = str(request.data.get("dry_run", "")).lower() in {"1", "true", "yes"}
         try:
             if dry_run:
-                return Response({**address_import.preview(organization, data, upload.name).as_dict(), "dry_run": True})
-            job = address_import.start_import(organization, request.user, data, upload.name)
+                return Response({**address_import.preview(voter_list, data, upload.name).as_dict(), "dry_run": True})
+            job = address_import.start_import(voter_list, request.user, data, upload.name)
         except address_import.ImportFileError as exc:
             raise ValidationError({"file": str(exc)}) from None
         return Response(address_import_to_dict(job), status=status.HTTP_202_ACCEPTED)

@@ -10,6 +10,8 @@ urlpatterns = [
     path("organizations/<slug:code>/", views.OrganizationAdminDetailView.as_view()),
     path("organizations/<slug:code>/logo/", views.OrganizationLogoUploadView.as_view()),
     path("organizations/<slug:code>/enter/", views.EnterOrganizationView.as_view()),
-    path("organizations/<slug:code>/addresses/", views.OrganizationAddressesView.as_view()),
-    path("organizations/<slug:code>/addresses/import/", views.OrganizationAddressImportView.as_view()),
+    path("voter-lists/", views.VoterListListView.as_view()),
+    path("voter-lists/<int:pk>/", views.VoterListDetailView.as_view()),
+    path("voter-lists/<int:pk>/addresses/", views.VoterListAddressesView.as_view()),
+    path("voter-lists/<int:pk>/addresses/import/", views.VoterListImportView.as_view()),
 ]

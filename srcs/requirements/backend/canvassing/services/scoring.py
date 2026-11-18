@@ -11,6 +11,8 @@ from typing import Callable
 from django.db import connection, transaction
 from django.utils import timezone
 
+from accounts.models import Organization
+
 from ..models import Address, District
 
 
@@ -57,8 +59,9 @@ def french_stats(organization_id: int, district_ids: list[int] | None = None) ->
                    COUNT(a.id) FILTER (WHERE %(year)s - a.birth_year BETWEEN 18 AND 29),
                    COUNT(a.id) FILTER (WHERE %(year)s - a.birth_year >= 65)
             FROM {District._meta.db_table} d
+            JOIN {Organization._meta.db_table} o ON o.id = d.organization_id
             LEFT JOIN {Address._meta.db_table} a
-              ON a.organization_id = d.organization_id AND a.disabled_at IS NULL AND ST_Contains(d.geometry, a.location)
+              ON a.voter_list_id = o.voter_list_id AND a.disabled_at IS NULL AND ST_Contains(d.geometry, a.location)
             WHERE d.organization_id = %(organization)s {only}
             GROUP BY d.id
             """,

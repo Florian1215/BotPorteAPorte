@@ -1,4 +1,4 @@
-import { Building2, ChevronRight, Globe, House, LandPlot, LogOut, type LucideIcon, Menu, Settings, ShieldCheck, Trophy, UserCheck, Users, X } from "lucide-react";
+import { Building2, ChevronRight, FileSpreadsheet, Globe, House, LandPlot, LogOut, type LucideIcon, Menu, Settings, ShieldCheck, Trophy, UserCheck, Users, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
@@ -90,6 +90,7 @@ function Drawer({ onClose, pending }: { onClose: () => void; pending: number }) 
     user?.can_manage_organization && { to: "/organization", icon: Building2, label: "Mon organisation" },
     user?.organization && (user.can_manage_organization || user.is_site_admin) && { to: "/areas", icon: LandPlot, label: "Zones" },
     user?.is_site_admin && { to: "/organizations", icon: Globe, label: "Toutes les organisations" },
+    user?.is_site_admin && { to: "/lec", icon: FileSpreadsheet, label: "LEC" },
     user?.is_site_admin && { to: "/site-admin", icon: ShieldCheck, label: "Admin" },
     user?.is_staff && { to: "/admin/", icon: Settings, label: "Django", external: true },
   ].filter(Boolean) as MenuItem[];

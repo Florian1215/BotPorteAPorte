@@ -1,4 +1,4 @@
-"""Import of an organization's voter list (organization settings screen, or `manage.py import_addresses`).
+"""Import of a voter list (LEC): "LEC" screen of the site admins, or `manage.py import_addresses`.
 
 The file is the full, current list:
 - the consular electoral list as exported by the consulate ("LEC communiquée", .xls / .xlsx): a few title
@@ -11,7 +11,7 @@ After an import:
 - people not yet in the database are created;
 - people already there are kept (with their visit status), re-enabled if they had been disabled, and moved if
   their address changed;
-- people of the organization absent from the file are *disabled*: never deleted (history and statistics stay),
+- people of the list absent from the file are *disabled*: never deleted (history and statistics stay),
   but hidden from everyone.
 
 Kept from the list: name, first names, address, year of birth. Not kept: e-mail, place of birth, full date of
@@ -31,7 +31,7 @@ from django.contrib.gis.geos import Point
 from django.db import close_old_connections, transaction
 from django.utils import timezone
 
-from accounts.models import Organization
+from accounts.models import VoterList
 from canvassing.addressutils import AddressNotGeolocated, sanitize_address
 from canvassing.models import Address, AddressImport, GeocodeCache, Status, address_key
 from canvassing.services import geocoding, scoring
@@ -293,12 +293,12 @@ def _moved(address: Address, entry: Entry) -> bool:
     )
 
 
-def plan_import(organization: Organization, entries: list[Entry], report: ImportReport) -> Plan:
+def plan_import(voter_list: VoterList, entries: list[Entry], report: ImportReport) -> Plan:
     plan = Plan(report=report)
     by_key: dict[str, list[Address]] = defaultdict(list)
     by_content: dict[str, list[Address]] = defaultdict(list)
     by_person: dict[str, list[Address]] = defaultdict(list)
-    existing = list(Address.all_objects.filter(organization=organization).order_by("id"))
+    existing = list(Address.all_objects.filter(voter_list=voter_list).order_by("id"))
     for address in existing:
         by_key[address.source_key].append(address)
         by_content[address.compute_key()].append(address)
@@ -332,9 +332,9 @@ def plan_import(organization: Organization, entries: list[Entry], report: Import
     return plan
 
 
-def preview(organization: Organization, data: bytes, filename: str) -> ImportReport:
-    entries, report = read_file(data, filename, organization.country_code)
-    return plan_import(organization, entries, report).report
+def preview(voter_list: VoterList, data: bytes, filename: str) -> ImportReport:
+    entries, report = read_file(data, filename, voter_list.country_code)
+    return plan_import(voter_list, entries, report).report
 
 
 # --------------------------------------------------------------------------- geocoding + saving
@@ -370,12 +370,12 @@ UPDATED_FIELDS = [
 
 
 @transaction.atomic
-def commit(organization: Organization, plan: Plan) -> ImportReport:
+def commit(voter_list: VoterList, plan: Plan) -> ImportReport:
     to_create = []
     for e in plan.create:
         to_create.append(
             Address(
-                organization=organization,
+                voter_list=voter_list,
                 source_key=e.key,
                 name=e.name,
                 first_names=e.first_names,
@@ -412,41 +412,42 @@ def commit(organization: Organization, plan: Plan) -> ImportReport:
     # Release reservations so that a re-enabled address does not come back stuck "in progress".
     disabled.filter(status=Status.PLANNED).update(status=Status.TO_VISIT, visit_planned_at=None, visit_planned_by=None)
     disabled.update(disabled_at=timezone.now())
-    # The zones' density counts the French voters of the list: it changed with it.
-    scoring.rescore_organization(organization)
+    # The zones' density and ages count the French voters of the list: they changed with it.
+    for organization in voter_list.organizations.all():
+        scoring.rescore_organization(organization)
     return plan.report
 
 
-def run_import(organization: Organization, data: bytes, filename: str, progress=None) -> ImportReport:
+def run_import(voter_list: VoterList, data: bytes, filename: str, progress=None) -> ImportReport:
     """Read, geocode and save (synchronously)."""
-    entries, report = read_file(data, filename, organization.country_code)
-    plan = plan_import(organization, entries, report)
-    geocode_plan(plan, organization.country_code, progress)
-    return commit(organization, plan)
+    entries, report = read_file(data, filename, voter_list.country_code)
+    plan = plan_import(voter_list, entries, report)
+    geocode_plan(plan, voter_list.country_code, progress)
+    return commit(voter_list, plan)
 
 
-def start_import(organization: Organization, user, data: bytes, filename: str) -> AddressImport:
+def start_import(voter_list: VoterList, user, data: bytes, filename: str) -> AddressImport:
     """Run the import in a background thread (geocoding a whole list takes a while). The file is read
     right away (format errors are reported immediately) and never stored."""
-    entries, report = read_file(data, filename, organization.country_code)
-    job = AddressImport.objects.create(organization=organization, user=user, filename=filename[:255])
+    entries, report = read_file(data, filename, voter_list.country_code)
+    job = AddressImport.objects.create(voter_list=voter_list, user=user, filename=filename[:255])
     threading.Thread(target=_run, args=(job.id, entries, report), daemon=True).start()
     return job
 
 
 def _run(job_id: int, entries: list[Entry], report: ImportReport) -> None:
     close_old_connections()
-    job = AddressImport.objects.select_related("organization").get(pk=job_id)
-    organization = job.organization
+    job = AddressImport.objects.select_related("voter_list").get(pk=job_id)
+    voter_list = job.voter_list
 
     def progress(done, total):
         AddressImport.objects.filter(pk=job_id).update(geocode_done=done, geocode_total=total)
 
     try:
-        plan = plan_import(organization, entries, report)
+        plan = plan_import(voter_list, entries, report)
         AddressImport.objects.filter(pk=job_id).update(geocode_total=plan.report.to_geocode)
-        geocode_plan(plan, organization.country_code, progress)
-        job.report = commit(organization, plan).as_dict()
+        geocode_plan(plan, voter_list.country_code, progress)
+        job.report = commit(voter_list, plan).as_dict()
         job.status = AddressImport.ImportStatus.DONE
     except geocoding.GeocodingUnavailable as exc:
         job.status, job.message = AddressImport.ImportStatus.FAILED, f"Géocodage impossible ({exc}). Réessaie plus tard."

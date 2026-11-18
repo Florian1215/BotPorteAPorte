@@ -1,7 +1,7 @@
 from django.utils.text import slugify
 from rest_framework import serializers
 
-from .models import Organization, Role, User, normalize_email
+from .models import Organization, Role, User, VoterList, normalize_email
 
 
 class OrganizationSerializer(serializers.ModelSerializer):
@@ -20,9 +20,14 @@ class OrganizationAdminSerializer(OrganizationSerializer):
 
     n_members = serializers.IntegerField(read_only=True, required=False)
     n_pending = serializers.IntegerField(read_only=True, required=False)
+    # Voter list (LEC) the organization depends on, and how far around its city: chosen by the site admins only
+    # (see `OrganizationAdminDetailView`).
+    voter_list = serializers.PrimaryKeyRelatedField(queryset=VoterList.objects.all(), allow_null=True, required=False)
+    voter_list_name = serializers.CharField(source="voter_list.name", read_only=True, default=None)
+    radius_km = serializers.IntegerField(min_value=1, max_value=500, required=False)
 
     class Meta(OrganizationSerializer.Meta):
-        fields = OrganizationSerializer.Meta.fields + ["n_members", "n_pending"]
+        fields = OrganizationSerializer.Meta.fields + ["n_members", "n_pending", "voter_list", "voter_list_name", "radius_km"]
         read_only_fields = ["code"]
 
     def create(self, validated_data):
@@ -46,7 +51,36 @@ class OrganizationAdminSerializer(OrganizationSerializer):
                 raise serializers.ValidationError({"city": "Choisis la ville dans la liste des résultats."})
         if self.instance is None and not attrs.get("city"):
             raise serializers.ValidationError({"city": "Choisis la ville de l'organisation."})
+        if self.instance is None and not attrs.get("voter_list"):
+            raise serializers.ValidationError({"voter_list": "Choisis la LEC dont dépend l'organisation."})
         return attrs
+
+
+class VoterListSerializer(serializers.ModelSerializer):
+    """A voter list (LEC), for the site admins: with its address counts and the organizations depending on it."""
+
+    n_active = serializers.IntegerField(read_only=True, required=False)
+    n_disabled = serializers.IntegerField(read_only=True, required=False)
+    organizations = serializers.SerializerMethodField()
+
+    class Meta:
+        model = VoterList
+        fields = ["id", "name", "country_code", "created_at", "n_active", "n_disabled", "organizations"]
+        read_only_fields = ["id", "created_at"]
+
+    def get_organizations(self, voter_list) -> list[dict]:
+        return [{"code": o.code, "name": o.name, "city": o.city} for o in voter_list.organizations.all()]
+
+    def validate_name(self, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Donne un nom à la LEC (ex. LEC Berlin).")
+        return value
+
+    def validate_country_code(self, value: str) -> str:
+        if len(value) != 2 or not value.isalpha():
+            raise serializers.ValidationError("Code pays à 2 lettres (ex. DE, BE, GB).")
+        return value.upper()
 
 
 

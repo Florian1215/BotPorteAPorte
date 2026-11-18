@@ -31,6 +31,7 @@ from canvassing.models import (
 
 from . import routing
 from .geo import LatLon, bbox_around, haversine_matrix
+from .scope import organization_addresses
 from .tsp import solve_open_path
 
 
@@ -51,7 +52,8 @@ def _linestring(points: list[LatLon]) -> LineString:
 
 
 def _to_visit(user):
-    return Address.objects.filter(organization_id=user.organization_id, status=Status.TO_VISIT)
+    """Addresses free for a tour: the organization's (its voter list, around its city) still to visit."""
+    return organization_addresses(user.organization).filter(status=Status.TO_VISIT)
 
 
 # --------------------------------------------------------------------------- housekeeping

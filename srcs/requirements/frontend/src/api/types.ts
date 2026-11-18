@@ -17,7 +17,25 @@ export type City = { name: string; region: string; country: string; country_code
 /** Fields sent to the API when a city is picked (country deduced from it). */
 export type CityFields = Pick<Organization, "city" | "city_lat" | "city_lon" | "country_code">;
 
-export type OrganizationAdmin = Organization & { n_members?: number; n_pending?: number };
+export type OrganizationAdmin = Organization & {
+  n_members?: number;
+  n_pending?: number;
+  /** Voter list (LEC) the organization depends on (chosen by a site admin), and how far around its city. */
+  voter_list: number | null;
+  voter_list_name: string | null;
+  radius_km: number;
+};
+
+/** A consular voter list (LEC), shared by the organizations depending on it; managed by the site admins. */
+export type VoterList = {
+  id: number;
+  name: string;
+  country_code: string;
+  created_at: string;
+  n_active: number;
+  n_disabled: number;
+  organizations: { code: string; name: string; city: string }[];
+};
 
 export type Role = "militant" | "experienced" | "manager" | "admin";
 

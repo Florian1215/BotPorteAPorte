@@ -22,6 +22,8 @@ from django.contrib.gis.geos import GEOSException, GEOSGeometry, MultiPolygon, P
 from django.db import close_old_connections, connection, transaction
 from django.utils import timezone
 
+from accounts.models import Organization
+
 from ..models import District, DistrictImport
 from . import scoring
 
@@ -352,8 +354,9 @@ def progress(organization_id: int, district_ids: list[int] | None = None, electi
                    COUNT(a.id) FILTER (WHERE f.done),
                    COUNT(a.id) FILTER (WHERE NOT f.done AND NOT f.carried AND f.leafleted)
             FROM {District._meta.db_table} d
+            JOIN {Organization._meta.db_table} o ON o.id = d.organization_id
             JOIN {Address._meta.db_table} a
-              ON a.organization_id = d.organization_id AND a.disabled_at IS NULL AND ST_Contains(d.geometry, a.location)
+              ON a.voter_list_id = o.voter_list_id AND a.disabled_at IS NULL AND ST_Contains(d.geometry, a.location)
             CROSS JOIN LATERAL (
                 SELECT
                     EXISTS (SELECT 1 FROM {visits} v WHERE v.address_id = a.id AND v.result <> %(retry)s {in_election}) AS done,
@@ -414,7 +417,7 @@ def age_pyramid(district: District) -> dict:
 
     year = timezone.localdate().year
     counts = dict(
-        Address.objects.filter(organization_id=district.organization_id, location__within=district.geometry)
+        Address.objects.filter(voter_list_id=district.organization.voter_list_id, location__within=district.geometry)
         .values_list("birth_year")
         .annotate(n=Count("id"))
         .order_by()

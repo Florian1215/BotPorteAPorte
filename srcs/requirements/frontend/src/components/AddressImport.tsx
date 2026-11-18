@@ -21,7 +21,7 @@ function duration(addresses: number): string {
  * The file is first read as a dry run to show what will change; once confirmed, the import runs in the
  * background (new addresses are geocoded) and its progress is shown here.
  */
-export default function AddressImport({ organization }: { organization: string }) {
+export default function AddressImport({ voterList }: { voterList: number }) {
   const [counts, setCounts] = useState<AddressCounts | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<ImportReport | null>(null);
@@ -29,7 +29,7 @@ export default function AddressImport({ organization }: { organization: string }
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<"preview" | "import" | null>(null);
   const input = useRef<HTMLInputElement>(null);
-  const base = `/manage/organizations/${organization}/addresses/`;
+  const base = `/manage/voter-lists/${voterList}/addresses/`;
 
   const loadCounts = useCallback(() => {
     api<AddressCounts>(base).then(setCounts).catch(() => setCounts(null));
@@ -191,10 +191,6 @@ export default function AddressImport({ organization }: { organization: string }
               Plus de la moitié des adresses actuelles seraient désactivées. Vérifie que c'est bien la liste complète.
             </Alert>
           )}
-          <p className="text-xs leading-relaxed text-zinc-500">
-            Les personnes sorties de la liste ne sont pas supprimées (l'historique des visites est gardé) mais plus personne n'y a accès.
-            Elles reviennent si elles réapparaissent dans une prochaine liste.
-          </p>
           <div className="grid grid-cols-2 gap-2">
             <Button variant="secondary" size="sm" onClick={cancel} disabled={busy !== null}>
               Annuler

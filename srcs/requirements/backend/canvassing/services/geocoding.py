@@ -5,6 +5,8 @@ Addresses of the electoral lists are typed by hand and often have typos ("Haupst
 1. Nominatim, as written;
 2. Nominatim, cleaned up (abbreviations, case, "OT …" districts, "172 a");
 3. Nominatim without the postcode (postcode typo), kept only if the hit is one digit away from it;
+   Then a free-text search (villages without street names, "Harbach 86"; odd spellings), kept only if it is the
+   same house number, next to the given postcode, on a street (or place) with a similar name;
 4. typo correction: the closest street name already located in the same postcode (or town), on Nominatim;
 5. optionally, a self-hosted Photon server (typo-tolerant search, like the search box of a map site): its hit is
    only accepted in the same postcode (or town).
@@ -50,6 +52,21 @@ def same_street(found: str | None, typed: str) -> bool:
     return False
 
 
+# Where Nominatim puts the "street" of an address. Villages (mostly in Austria) have no street names: the house
+# number goes with the place ("Harbach 86", "Markt 7").
+STREET_KEYS = ("road", "square", "place", "hamlet", "isolated_dwelling", "locality", "village", "neighbourhood")
+
+
+def _street_of(details: dict, typed: str | None = None) -> str | None:
+    """The street (or place) of a Nominatim result: the one looking like the typed street if several are given."""
+    names = [details[k] for k in STREET_KEYS if details.get(k)]
+    if typed:
+        for name in names:
+            if same_street(name, typed):
+                return name
+    return names[0] if names else None
+
+
 def _nominatim(geocoder, street_name: str, street_number: str, zip_code: str, city: str, country_code: str | None,
                typed: str | None = None):
     # Remove floor/flat number from street number, otherwise geolocation has issues
@@ -62,8 +79,8 @@ def _nominatim(geocoder, street_name: str, street_number: str, zip_code: str, ci
     if location is None:
         return None
     details = location.raw.get("address", {})
-    road = next((details[k] for k in ("road", "square", "hamlet", "village") if k in details), None)
     typed = typed or street_name
+    road = _street_of(details, typed)
     if same_street(road, typed):
         return location
     # A renamed street is found under its former name ("Wissmannstraße" → "Lucy-Lameck-Straße"): keep the hit
@@ -85,6 +102,8 @@ def geocode(addr: AddressNotGeolocated, country_code: str | None, geocoder=None)
 # --------------------------------------------------------------------------- cleaning hand-typed addresses
 
 _STREET_FIXES = [
+    (re.compile(r"(?i)str\.r(?=\s|$)"), "straßer"),  # Vienna: "Landstr.r Hauptstr." → "Landstraßer Hauptstraße"
+    (re.compile(r"(?i)stra(?:b|ss)e(?=\s|$)"), "straße"),  # "Hauptstrabe" (ß typed as b), "Hauptstrasse"
     (re.compile(r"(?i)(?<=\w)str(?:\.|asse|aße)?$"), "straße"),  # "Görrestr." → "Görrestraße"
     (re.compile(r"(?i)-str(?:\.|asse|aße)?$"), "-Straße"),  # "Theodor-Storm-str." → "Theodor-Storm-Straße"
     (re.compile(r"(?i)\bstra?(?:\.|sse)?(?=\s|$)"), "Straße"),  # "Leinder Str." / "Stra" → "Leinder Straße"
@@ -101,8 +120,17 @@ def _fix_case(text: str) -> str:
     return " ".join(fix(w) for w in text.split())
 
 
+# A street name ends with one of these (used to find it in "c/o Jane Doe Westerfeldstr.").
+_STREET_END = r"(?:str\.?|straße|strasse|weg|gasse|allee|platz|ring|damm|ufer|steig|zeile)"
+
+
 def clean_street(name: str) -> str:
-    name = _fix_case(" ".join(name.split())).strip(" ,;")
+    name = " ".join(name.split())
+    # "c/o Manuela Jannarelli Westerfeldstr." → "Westerfeldstr." (someone else's name before the street).
+    name = re.sub(rf"(?i)^c/o\s+(?:\S+\s+)*?(?=\S*{_STREET_END}(?:\s|$))", "", name)
+    # "Schachendorf Nr." → "Schachendorf" (the number is in its own field).
+    name = re.sub(r"(?i)\s*\bnr\s*\.?(?=\s|$)", "", name)
+    name = _fix_case(name).strip(" ,;.")
     name = re.sub(r"(?i)\bbgm\.?\s*-?\s*", "Bürgermeister-", name)
     for pattern, repl in _STREET_FIXES:
         name = pattern.sub(repl, name)
@@ -110,10 +138,13 @@ def clean_street(name: str) -> str:
 
 
 def clean_number(number: str) -> str:
-    """"172 a" → "172a", "12/3" → "12", "2F-K" → "2F"."""
-    number = re.sub(r"\s+", "", number.split("/")[0])
-    match = re.match(r"\d+[a-zA-Z]?(?![a-zA-Z])", number)
-    return match.group(0) if match else number
+    """"172 a" → "172a", "12/3" → "12", "2F-K" → "2F", and the flat after the house number:
+    "4 b Top 7" → "4b", "3 DG" → "3", "4 Whg 313" → "4", "1 OT Hoppenrade" → "1"."""
+    first = number.split("/")[0]
+    match = re.match(r"\s*(\d+)\s?([a-zA-Z](?![a-zA-Z]))?", first)
+    if match:
+        return match.group(1) + (match.group(2) or "")
+    return re.sub(r"\s+", "", first)
 
 
 def street_variants(street: str) -> list[str]:
@@ -123,13 +154,21 @@ def street_variants(street: str) -> list[str]:
     "Rudolf Breitscheid Straße" → "Rudolf-Breitscheid-Straße".
     """
     variants = [street]
-    glued = re.match(r"^(.*\w)straße$", street)
+    glued = re.match(r"^(.*\w)(straße|allee|gasse|platz|damm|ufer|weg)$", street, flags=re.I)
     if glued:
-        stem = glued.group(1)
-        variants += [f"{stem} Straße"] + ([f"{stem}er Straße"] if not stem.endswith(("e", "er")) else [])
+        stem, suffix = glued.group(1), glued.group(2).capitalize()
+        if suffix != "Weg":  # "Panoramaweg" is right as it is
+            variants.append(f"{stem} {suffix}")  # "Schönhauserallee" → "Schönhauser Allee"
+        if suffix == "Straße" and not stem.endswith(("e", "er")):
+            variants.append(f"{stem}er Straße")
+        words = [w for w in re.split(r"[\s-]+", stem) if w]
+        if len(words) >= 2:  # named after someone: "Otto-Bauergasse", "Franz Emrichgasse" → "Franz-Emrich-Gasse"
+            variants.append("-".join(words + [suffix]))
     words = street.replace("-", " ").split()
     if len(words) >= 3 and words[-1] == "Straße":
         variants.append("-".join(words))
+    if len(words) == 2 and words[1].lower() in ("allee", "gasse", "platz", "damm", "ufer", "weg", "ring"):
+        variants.append(words[0] + words[1].lower())  # "Lissabon Allee" → "Lissabonallee"
     if "-" in street:
         variants.append(street.replace("-", " "))
     return list(dict.fromkeys(variants))
@@ -214,7 +253,27 @@ def geocode_direct(addr: AddressNotGeolocated, country_code: str | None, geocode
         # Several towns/districts have the same street name: only keep a hit next to the given postcode.
         if location and _close_zip(location.raw.get("address", {}).get("postcode"), addr.zip_str):
             return location
-    return None
+    return _free_text(geocoder, street, number, addr.zip_str, city, country_code, addr.street_name)
+
+
+def _free_text(geocoder, street: str, number: str, zip_code: str, city: str, country_code: str | None, typed: str):
+    """One free-text search ("Harbach 86, 5630 Bad Hofgastein"), as typed in a map's search box. Kept only if it
+    is the same house number, on a street (or place) with a similar name, in the same postcode (or town)."""
+    kwargs = {"exactly_one": True, "addressdetails": True}
+    if country_code:
+        kwargs["country_codes"] = country_code.lower()
+    location = geocoder(f"{street} {number}, {zip_code} {city}".strip(" ,"), **kwargs)
+    if location is None:
+        return None
+    details = location.raw.get("address", {})
+    town = next((details[k] for k in ("city", "town", "village", "municipality") if details.get(k)), "")
+    if not _same_number(details.get("house_number"), number):
+        return None
+    if not (same_street(_street_of(details, typed), typed) or same_street(_street_of(details, street), street)):
+        return None
+    if not (_close_zip(details.get("postcode"), zip_code) or (not zip_code and _similar(town, city))):
+        return None
+    return location
 
 
 class KnownStreets:
@@ -300,7 +359,7 @@ def geocode_fuzzy(addr: AddressNotGeolocated, country_code: str | None, geocoder
 def location_to_fields(addr: AddressNotGeolocated, location) -> dict | None:
     """Normalize a Nominatim result into address fields. Returns None if the result is too imprecise."""
     details = location.raw.get("address", {})
-    street = next((details[k] for k in ("road", "square", "hamlet", "village") if k in details), None)
+    street = _street_of(details, addr.street_name)
     city = next(
         (details[k] for k in ("city", "town", "village", "municipality", "suburb", "neighbourhood") if k in details),
         None,

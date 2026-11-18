@@ -4,7 +4,7 @@ from django.conf import settings
 from django.utils import timezone
 from django.contrib.gis.db import models
 
-from accounts.models import Organization
+from accounts.models import Organization, VoterList
 
 
 class Status(models.IntegerChoices):
@@ -68,10 +68,11 @@ class ActiveAddressManager(models.Manager):
 
 
 class Address(models.Model):
-    """A voter to visit. Addresses that disappeared from the latest import are disabled (`disabled_at`):
-    kept for history and statistics, but hidden everywhere (`Address.objects` excludes them)."""
+    """A voter to visit, from a voter list (LEC) shared by the organizations depending on it.
+    Addresses that disappeared from the latest import are disabled (`disabled_at`): kept for history and
+    statistics, but hidden everywhere (`Address.objects` excludes them)."""
 
-    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="addresses")
+    voter_list = models.ForeignKey(VoterList, on_delete=models.CASCADE, related_name="addresses", verbose_name="LEC")
     name = models.CharField("nom d'usage", max_length=255)
     first_names = models.CharField("prénoms", max_length=255, blank=True)
     address = models.CharField("adresse", max_length=255)
@@ -101,8 +102,8 @@ class Address(models.Model):
         verbose_name = "adresse"
         base_manager_name = "all_objects"  # tour stops / visits keep pointing at disabled addresses
         indexes = [
-            models.Index(fields=["organization", "status"], name="canvassing__organiz_status_idx"),
-            models.Index(fields=["organization", "source_key"], name="canvassing__organiz_srckey_idx"),
+            models.Index(fields=["voter_list", "status"], name="canvassing_address_list_status"),
+            models.Index(fields=["voter_list", "source_key"], name="canvassing_address_list_key"),
         ]
 
     def save(self, *args, **kwargs):
@@ -344,14 +345,14 @@ class GeocodeCache(models.Model):
 
 
 class AddressImport(models.Model):
-    """Import of an organization's voter list, run in the background (geocoding takes a while)."""
+    """Import of a voter list (LEC), run in the background (geocoding takes a while)."""
 
     class ImportStatus(models.TextChoices):
         RUNNING = "running", "En cours"
         DONE = "done", "Terminé"
         FAILED = "failed", "Échec"
 
-    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="address_imports")
+    voter_list = models.ForeignKey(VoterList, on_delete=models.CASCADE, related_name="imports")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
     filename = models.CharField(max_length=255, blank=True, default="")
     status = models.CharField(max_length=16, choices=ImportStatus.choices, default=ImportStatus.RUNNING)

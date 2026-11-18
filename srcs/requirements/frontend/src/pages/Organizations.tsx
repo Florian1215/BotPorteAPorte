@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { api, errorMessage } from "../api/client";
 import type { CityFields, OrganizationAdmin } from "../api/types";
 import CityPicker from "../components/CityPicker";
+import VoterListPicker, { type VoterListChoice } from "../components/VoterListPicker";
 import { OrgLogo } from "../components/organization";
 import { Alert, Button, EmptyState, Field, inputClass, Loading, Sheet } from "../components/ui";
 import { useAuth } from "../context/AuthContext";
@@ -65,6 +66,7 @@ export default function Organizations() {
             </p>
             <p className="text-sm text-zinc-500">
               {o.city ? `${o.city} · ` : ""}
+              {o.voter_list_name ? `${o.voter_list_name} · ` : ""}
               {o.n_members ?? 0} membre{(o.n_members ?? 0) > 1 ? "s" : ""}
               {o.n_pending ? <span className="font-semibold text-amber-700"> · {o.n_pending} à valider</span> : null}
             </p>
@@ -77,12 +79,14 @@ export default function Organizations() {
 }
 
 function CreateOrganization({ onCancel, onCreated }: { onCancel: () => void; onCreated: (o: OrganizationAdmin) => void }) {
-  const [form, setForm] = useState<{ name: string } & CityFields>({
+  const [form, setForm] = useState<{ name: string } & CityFields & VoterListChoice>({
     name: "",
     city: "",
     city_lat: null,
     city_lon: null,
     country_code: "",
+    voter_list: null,
+    radius_km: 30,
   });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -90,6 +94,7 @@ function CreateOrganization({ onCancel, onCreated }: { onCancel: () => void; onC
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!form.city) return setError("Choisis la ville de l'organisation dans la liste.");
+    if (!form.voter_list) return setError("Choisis la LEC dont dépend l'organisation.");
     setLoading(true);
     setError(null);
     try {
@@ -118,6 +123,7 @@ function CreateOrganization({ onCancel, onCreated }: { onCancel: () => void; onC
         />
       </Field>
       <CityPicker value={form} onChange={(city) => setForm({ ...form, ...city })} />
+      <VoterListPicker value={form} onChange={(choice) => setForm({ ...form, ...choice })} />
       <div className="grid grid-cols-2 gap-2">
         <Button type="button" variant="secondary" onClick={onCancel}>
           Annuler

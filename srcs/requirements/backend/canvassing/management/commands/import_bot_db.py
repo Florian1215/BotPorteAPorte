@@ -3,8 +3,9 @@
     manage.py import_bot_db postgres-20260824.sql [--dry-run] [--org BERLIN=demo-berlin] [--election "…"]
 
 What is imported, from the bot's `address` table:
-- every address, into the organization of its consulate (BERLIN, WIEN, …). Organizations are found by their city
-  or name (Berlin → "Berlin Insoumise", Wien → "Vienne Insoumise"…) and created when missing; `--org` forces one;
+- every address, into the voter list (LEC) of the organization of its consulate (BERLIN, WIEN, …). Organizations
+  are found by their city or name (Berlin → "Berlin Insoumise", Wien → "Vienne Insoumise"…) and created when
+  missing, with a list of their own when they have none ("LEC Berlin"); `--org` forces one;
 - the result of the last visit of each address (the bot kept no history), as a visit of the election given by
   `--election` (default: the consular election of May 2026), dated with the bot's `visit_planned_at`, with the
   Telegram id of who made it (`visit_planned_by`): it becomes theirs once they link their Telegram account on the
@@ -24,7 +25,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils.text import slugify
 
-from accounts.models import Organization, User
+from accounts.models import Organization, User, VoterList
 from canvassing.models import RESULT_TO_STATUS, AbsentDetail, Address, Election, Status, Visit, VisitResult, address_key
 from canvassing.services.address_import import person_key
 from canvassing.services.elections import RESET_STATUSES
@@ -169,7 +170,10 @@ class Command(BaseCommand):
         ]
         if candidates:
             # Several (e.g. a demo one): the one that already has the most addresses.
-            return max(candidates, key=lambda o: Address.all_objects.filter(organization=o).count()), False
+            return max(
+                candidates,
+                key=lambda o: Address.all_objects.filter(voter_list_id=o.voter_list_id).count() if o.voter_list_id else -1,
+            ), False
         code = slugify(new_name)
         organization, created = Organization.objects.get_or_create(
             code=code, defaults={"name": new_name, "city": city, "country_code": country}
@@ -178,8 +182,18 @@ class Command(BaseCommand):
 
     # ----------------------------------------------------------------------------------------------- addresses
 
+    def voter_list_of(self, organization: Organization) -> VoterList:
+        """The list the organization depends on (created, named after its city, when it has none)."""
+        if organization.voter_list_id is None:
+            organization.voter_list = VoterList.objects.create(
+                name=f"LEC {organization.city or organization.name}", country_code=organization.country_code
+            )
+            organization.save(update_fields=["voter_list"])
+        return organization.voter_list
+
     def import_consulate(self, organization: Organization, rows: list[dict], election: Election) -> Counter:
         stats = Counter(lus=len(rows))
+        voter_list = self.voter_list_of(organization)
 
         # Duplicates inside the file: same person (full name) at the same address → one address, the most
         # recent visit. `_key` (the site's key, on a shortened name) is only used to find addresses already there.
@@ -200,7 +214,7 @@ class Command(BaseCommand):
                 unique[same] = row
 
         # Already on the site (imported from a list, or a previous run of this command).
-        existing = list(Address.all_objects.filter(organization=organization))
+        existing = list(Address.all_objects.filter(voter_list=voter_list))
         by_key = {a.source_key: a for a in existing}
         by_key.update({a.compute_key(): a for a in existing})
         by_person = defaultdict(list)
@@ -209,7 +223,7 @@ class Command(BaseCommand):
         known_visits = {
             (address_id, result, created_at): (pk, telegram_user_id)
             for pk, address_id, result, created_at, telegram_user_id in Visit.objects.filter(
-                address__organization=organization
+                address__voter_list=voter_list
             ).values_list("id", "address_id", "result", "created_at", "telegram_user_id")
         }
         members = dict(User.objects.filter(telegram_id__isnull=False).values_list("telegram_id", "id"))
@@ -241,7 +255,7 @@ class Command(BaseCommand):
                 stats["invalides"] += 1
                 continue
             address = Address(
-                organization=organization,
+                voter_list=voter_list,
                 name=row["_name"][:255],
                 first_names=row["_first"][:255],
                 address=(row["address"] or "")[:255],

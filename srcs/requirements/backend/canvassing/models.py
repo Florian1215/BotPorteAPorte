@@ -155,7 +155,8 @@ class District(models.Model):
     eligible = models.FloatField("inscrit·es", null=True, blank=True)
     voters = models.FloatField("votant·es", null=True, blank=True)
     valid = models.FloatField("exprimés", null=True, blank=True)
-    linke = models.FloatField("voix Die Linke", null=True, blank=True)
+    # Votes of the organization's reference party (sum of `Organization.reference_party_columns` in `parties`).
+    reference_votes = models.FloatField("voix du parti de référence", null=True, blank=True)
     parties = models.JSONField("voix par parti", default=dict, blank=True)
 
     # Census 2022 (100 m grid cells whose centre lies in the district).
@@ -164,8 +165,9 @@ class District(models.Model):
     share_65_plus = models.FloatField(null=True, blank=True)
     share_foreign = models.FloatField(null=True, blank=True)
     rent_m2 = models.FloatField("loyer net moyen (€/m²)", null=True, blank=True)
-    # Share of the residents living on minimum social benefits (from `SocialArea`, weighted by census population).
-    low_income = models.FloatField("part de bas revenus", null=True, blank=True)
+    # Social indicator of the organization (`Organization.social_label`): e.g. share of the residents living on
+    # minimum social benefits (from `SocialArea`, weighted by census population), poverty rate, median income.
+    social_value = models.FloatField("indicateur social", null=True, blank=True)
 
     score = models.FloatField(default=0, db_index=True)
     score_parts = models.JSONField(default=dict, blank=True)
@@ -191,14 +193,14 @@ class DistrictImport(models.Model):
 
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="district_imports")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
-    source = models.CharField(max_length=32)  # a preset key, or "custom"
+    source = models.CharField(max_length=32)  # a city pack key (`services/packs.py`) or "ai"
     status = models.CharField(max_length=16, choices=ImportStatus.choices, default=ImportStatus.PENDING)
     message = models.TextField(blank=True, default="")
     report = models.JSONField(default=dict, blank=True)
-    # Uploaded files of a custom import, kept between the "inspect" and the "start" steps.
-    geometry_file = models.BinaryField(null=True, blank=True, editable=False)
-    results_file = models.BinaryField(null=True, blank=True, editable=False)
-    results_filename = models.CharField(max_length=255, blank=True, default="")
+    # AI import: what the responsable asked for (election, source…), the agent session, and its steps.
+    hint = models.TextField(blank=True, default="")
+    ai_session_id = models.CharField(max_length=64, blank=True, default="")
+    progress_log = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     finished_at = models.DateTimeField(null=True, blank=True)
 
@@ -222,19 +224,24 @@ class CensusCell(models.Model):
 
 
 class SocialArea(models.Model):
-    """A neighbourhood with a known share of low-income residents (shared by every organization).
+    """A neighbourhood with a known social indicator.
 
-    Berlin: the 542 "Planungsräume" of the Monitoring Soziale Stadtentwicklung (`manage.py load_social_index`).
+    Shared by every organization (`organization` empty) - Berlin: the 542 "Planungsräume" of the Monitoring
+    Soziale Stadtentwicklung (`manage.py load_social_index`), share of low-income residents - or found for one
+    organization by the AI import (its own indicator, see `Organization.social_label`).
     Polling districts do not follow these borders: each district takes the population-weighted mean of the
     areas its census cells fall in.
     """
 
+    organization = models.ForeignKey(
+        Organization, null=True, blank=True, on_delete=models.CASCADE, related_name="social_areas"
+    )
     source = models.CharField(max_length=32)
     code = models.CharField(max_length=32)
     name = models.CharField(max_length=255)
     geometry = models.MultiPolygonField(srid=4326)
     population = models.IntegerField(null=True)
-    low_income = models.FloatField(null=True)  # 0–1; None: not published (too few residents)
+    low_income = models.FloatField(null=True)  # the indicator's value; None: not published (too few residents)
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["source", "code"], name="social_area_unique_code")]
@@ -367,3 +374,16 @@ class AddressImport(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+
+
+class AiAgentConfig(models.Model):
+    """The Claude Managed Agents agent + environment of the AI district import (`manage.py setup_ai_agent`).
+
+    Created once, then updated in place; every import starts a session on them.
+    """
+
+    key = models.CharField(max_length=32, unique=True, default="districts")
+    agent_id = models.CharField(max_length=64)
+    agent_version = models.IntegerField(default=1)
+    environment_id = models.CharField(max_length=64)
+    updated_at = models.DateTimeField(auto_now=True)

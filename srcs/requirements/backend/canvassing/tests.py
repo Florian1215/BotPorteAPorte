@@ -1,5 +1,7 @@
 import io
 import json
+import zipfile
+from unittest import mock
 
 import pandas as pd
 from django.contrib.gis.geos import MultiPolygon, Polygon
@@ -9,6 +11,7 @@ from accounts.models import Organization, VoterList
 
 from .models import District
 from .services import districts as ds
+from .services import packs
 from .services import scoring
 
 
@@ -25,20 +28,27 @@ class ScoringTests(SimpleTestCase):
         self.assertEqual(scoring.percentile_ranks({1: 10, 2: 20, 3: 20, 4: 30}), {1: 0, 2: 0.5, 3: 0.5, 4: 1})
 
     def test_score_is_weighted_mean_of_ranks_and_skips_missing_data(self):
-        a = District(id=1, linke=10, valid=100, voters=50, eligible=100, rent_m2=None)
-        b = District(id=2, linke=40, valid=100, voters=80, eligible=100, rent_m2=None)
-        scoring.compute_scores([a, b], {"linke": 50, "abstention": 50, "young": 0, "density": 0, "low_income": 30})
+        a = District(id=1, reference_votes=10, valid=100, voters=50, eligible=100, rent_m2=None)
+        b = District(id=2, reference_votes=40, valid=100, voters=80, eligible=100, rent_m2=None)
+        scoring.compute_scores([a, b], {"party": 50, "abstention": 50, "young": 0, "density": 0, "social": 30})
         # b: best Linke vote (rank 1) but least abstention (rank 0); income is missing everywhere → ignored.
         self.assertEqual(a.score, 50)
         self.assertEqual(b.score, 50)
-        scoring.compute_scores([a, b], {"linke": 100, "abstention": 0, "young": 0, "density": 0, "low_income": 0})
+        scoring.compute_scores([a, b], {"party": 100, "abstention": 0, "young": 0, "density": 0, "social": 0})
         self.assertEqual((a.score, b.score), (0, 100))
-        self.assertIsNone(a.score_parts["low_income"]["rank"])
+        self.assertIsNone(a.score_parts["social"]["rank"])
 
     def test_more_low_income_is_better(self):
-        a, b = District(id=1, low_income=0.25), District(id=2, low_income=0.05)
-        scoring.compute_scores([a, b], {"low_income": 10})
+        a, b = District(id=1, social_value=0.25), District(id=2, social_value=0.05)
+        scoring.compute_scores([a, b], {"social": 10})
         self.assertGreater(a.score, b.score)
+
+    def test_a_higher_income_is_worse(self):
+        a, b = District(id=1, social_value=30000), District(id=2, social_value=18000)
+        org = Organization(social_label="Revenu médian", social_higher_is_poorer=False)
+        scoring.compute_scores([a, b], {"social": 10}, scoring.criteria_for(org))
+        self.assertGreater(b.score, a.score)
+        self.assertEqual(scoring.criteria_for(Organization(reference_party="KPÖ"))[0].label, "Vote KPÖ")
 
     def test_mss_low_income_share(self):
         from canvassing.management.commands.load_social_index import WORKING_AGE_SHARE, low_income_share
@@ -48,7 +58,7 @@ class ScoringTests(SimpleTestCase):
         self.assertIsNone(low_income_share({"kom": "gültig", "s1": -9999, "s3": 10}))
 
     def test_clean_weights(self):
-        self.assertEqual(scoring.clean_weights({"linke": "150", "young": -3})["linke"], 100)
+        self.assertEqual(scoring.clean_weights({"party": "150", "young": -3})["party"], 100)
         with self.assertRaises(ValueError):
             scoring.clean_weights({})
 
@@ -92,70 +102,110 @@ class BerlinPostalVotesTests(SimpleTestCase):
         rows, report = ds.rows_from_berlin(geometry, results)
         by_code = {r.code: r for r in rows}
         self.assertEqual(report["n_without_results"], 0)
-        self.assertEqual(by_code["01101"].linke, 100 + 50)
-        self.assertEqual(by_code["01102"].linke, 50 + 150)
+        self.assertEqual(by_code["01101"].reference_votes, 100 + 50)
+        self.assertEqual(by_code["01102"].reference_votes, 50 + 150)
         self.assertEqual(by_code["01102"].voters, 100 + 300)
-        self.assertEqual(sum(r.linke for r in rows), 100 + 50 + 200)
+        self.assertEqual(sum(r.reference_votes for r in rows), 100 + 50 + 200)
 
 
-class CustomImportTests(TestCase):
+def btw25_zip(rows):
+    """A federal results file (`btw25_wbz.zip`) with the given ballot-box districts: (municipality, wbz, label,
+    Anlage-30 name, eligible, voters, valid, Linke, SPD), plus one postal district that must be left out."""
+    header = (
+        "Wahlkreis;Land;Regierungsbezirk;Kreis;Verbandsgemeinde;Gemeinde;Kennziffer Urnenwahlbezirke nach § 68 BWO;"
+        "Kennziffer Briefwahlzugehörigkeit;Gemeindename;Wahlbezirk;Bezirksart;Wahlberechtigte (A);Wählende (B);"
+        "Ungültige - Zweitstimmen;Gültige - Zweitstimmen;Die Linke - Zweitstimmen;SPD - Zweitstimmen;"
+        "Ungekürzte Wahlbezirksbezeichnung;Bezeichnung des Wahlbezirkes gemäß Anlage 30 zur BWO"
+    )
+    lines = ["(c) Die Bundeswahlleiterin", "", "Ergebnisse", "", header]
+    for m, wbz, label, name, eligible, voters, valid, linke, spd in rows:
+        lines.append(f"1;01;0;02;0000;000;0000;00;{m};{wbz};0;{eligible};{voters};0;{valid};{linke};{spd};{label};{name}")
+    lines.append(f"1;01;0;02;0000;000;0000;00;{rows[0][0]};9001;5;0;500;0;500;400;100;9001;Briefwahl")
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("btw25_wbz_ergebnisse.csv", "\ufeff" + "\n".join(lines))
+    return buffer.getvalue()
+
+
+class PackTests(TestCase):
     def setUp(self):
-        self.organization = Organization.objects.create(code="test", name="Test")
+        self.organization = Organization.objects.create(code="kiel", name="Kiel", city="Kiel", city_lat=54.32, city_lon=10.13)
+        self.federal = btw25_zip([
+            ("Kiel, Landeshauptstadt", "000011", "000011", "–", 1000, 600, 590, 120, 100),
+            ("Kiel, Landeshauptstadt", "000015", "000015", "–", 500, 300, 290, 10, 100),
+            ("Kiel, Landeshauptstadt", "000012", "000012", "–", 800, 400, 400, 20, 200),
+            ("Kielholm", "000013", "000013", "–", 1, 1, 1, 1, 0),  # another municipality
+        ])
 
-    def files(self):
-        geometry = json.dumps(
-            {
-                "type": "FeatureCollection",
-                "features": [
-                    feature({"nr": "0001", "label": "Nord"}, 0, 0),
-                    feature({"nr": "0002", "label": "Sud"}, 1, 0),
-                    feature({"nr": "0002", "label": "Sud"}, 1, 1),  # same district, second piece
-                    feature({"nr": "0003", "label": "Est"}, 2, 0),
-                ],
-            }
-        ).encode()
-        results = "Bezirk;Gültig;LINKE;SPD\n1;100;30;20\n2;200;20;100\n2;50;10;5\n9;10;1;1\n".encode()
-        return geometry, results
+    def test_federal_results_keep_the_ballot_box_districts_of_the_city(self):
+        with mock.patch.object(packs, "fetch", return_value=self.federal):
+            results = packs.btw25("Kiel,", "wbz")
+        self.assertEqual(set(results), {"11", "15", "12"})
+        self.assertEqual((results["11"].valid, results["11"].parties["Die Linke"]), (590, 120))
 
-    def test_inspect(self):
-        geometry, results = self.files()
-        info = ds.inspect_files(geometry, results, "res.csv")
-        self.assertEqual(info["columns"], ["Bezirk", "Gültig", "LINKE", "SPD"])
-        self.assertIn("nr", info["geometry_properties"])
+    def test_districts_sharing_a_polling_station_make_one_zone(self):
+        features = [
+            {"Wahlbezirk": "011/015", "Wahllokal": "Forum", "_geometry": MultiPolygon(square(0, 0), srid=4326)},
+            {"Wahlbezirk": "012", "Wahllokal": "vhs", "_geometry": MultiPolygon(square(1, 0), srid=4326)},
+            {"Wahlbezirk": "012", "Wahllokal": "vhs", "_geometry": MultiPolygon(square(1, 1), srid=4326)},
+        ]
+        with mock.patch.object(packs, "fetch", return_value=self.federal), \
+                mock.patch.object(packs, "_layer", return_value=features):
+            result = packs.run("kiel_btw25")
+        by_code = {r.code: r for r in result.rows}
+        self.assertEqual(set(by_code), {"011/015", "012"})
+        self.assertEqual(by_code["011/015"].valid, 590 + 290)
+        self.assertEqual(by_code["011/015"].parties["Die Linke"], 130)
+        self.assertEqual(len(by_code["012"].geometry), 2)  # two pieces merged
+        self.assertEqual(result.settings.reference_party_columns, ["Die Linke"])
+        self.assertTrue(result.social_from_rent)
 
-    def test_rows_match_ids_merge_pieces_and_sum_lines(self):
-        geometry, results = self.files()
-        mapping = {"geo_id": "nr", "geo_name": "label", "res_id": "Bezirk", "linke": "LINKE", "valid": "Gültig", "parties": ["LINKE", "SPD"]}
-        rows, report = ds.rows_from_custom(geometry, results, "res.csv", mapping)
-        by_code = {r.code: r for r in rows}
-        self.assertEqual(len(rows), 3)
-        self.assertEqual(by_code["0002"].linke, 30)  # two result lines summed
-        self.assertEqual(by_code["0002"].valid, 250)
-        self.assertEqual(len(by_code["0002"].geometry), 2)  # two pieces merged
-        self.assertEqual(by_code["0002"].parties, {"LINKE": 30, "SPD": 105})
-        self.assertEqual(report["n_without_results"], 1)  # 0003
-        self.assertEqual(report["n_results_without_district"], 1)  # 9
-
-        result = ds.save_districts(self.organization, rows, "Test")
-        self.assertEqual(result["n_districts"], 3)
+        ds.save_districts(self.organization, result.rows, result.election, result.settings)
+        self.assertEqual(packs.social_from_rent(self.organization), 0)  # no census loaded in tests
         best = District.objects.filter(organization=self.organization).order_by("-score").first()
-        self.assertEqual(best.code, "0001")  # 30 % Linke
-        self.assertGreater(best.area_km2, 0)
-        self.assertIsNotNone(best.label_point)
+        self.assertEqual(best.code, "011/015")  # 130/880 Linke against 20/400
+        self.organization.refresh_from_db()
+        self.assertEqual(self.organization.social_label, "Loyer net moyen (Zensus 2022)")
+        self.assertFalse(self.organization.social_higher_is_poorer)
 
-    def test_wrong_ids_are_reported(self):
-        geometry, results = self.files()
-        mapping = {"geo_id": "label", "res_id": "Bezirk", "linke": "LINKE", "valid": "Gültig"}
-        with self.assertRaises(ds.DistrictImportError):
-            ds.rows_from_custom(geometry, results, "res.csv", mapping)
+    def test_a_changed_source_is_reported(self):
+        features = [{"Wahlbezirk": "077", "_geometry": MultiPolygon(square(0, 0), srid=4326)}]
+        with mock.patch.object(packs, "fetch", return_value=self.federal), \
+                mock.patch.object(packs, "_layer", return_value=features), \
+                self.assertRaisesMessage(ds.DistrictImportError, "ne correspondent plus"):
+            packs.run("kiel_btw25")
+
+    def test_district_numbers_written_differently(self):
+        self.assertEqual({packs.key("006-11"), packs.key("00611"), packs.key(611)}, {"611"})
+        self.assertEqual(packs.key("B151"), "B151")
+
+    def test_catalog_puts_the_city_of_the_organization_first(self):
+        catalog = packs.catalog(self.organization)
+        self.assertEqual((catalog[0]["key"], catalog[0]["recommended"]), ("kiel_btw25", True))
+        self.assertEqual(sum(p["recommended"] for p in catalog), 1)
+        self.assertEqual(len(catalog), 19)
+        self.assertIsNone(packs.nearest(None, None))
+
+    def test_import_api(self):
+        from rest_framework.test import APIClient
+
+        from accounts.models import Role, User
+
+        manager = User.objects.create_user(email="resp@kiel.test", organization=self.organization, role=Role.MANAGER, is_approved=True)
+        client = APIClient()
+        client.force_authenticate(manager)
+        self.assertEqual(client.get("/api/manage/districts/").json()["packs"][0]["key"], "kiel_btw25")
+        self.assertEqual(client.post("/api/manage/districts/import/", {"pack": "atlantis"}, format="json").status_code, 400)
+        with mock.patch.object(ds, "start_import") as start:
+            response = client.post("/api/manage/districts/import/", {"pack": "kiel_btw25"}, format="json")
+        self.assertEqual((response.status_code, response.json()["source"]), (202, "kiel_btw25"))
+        start.assert_called_once()
 
     def test_multipolygon_kept(self):
         self.assertIsInstance(ds.as_multipolygon(square(0, 0)), MultiPolygon)
 
 
 # --------------------------------------------------------------------------- voter list import (LEC)
-
-from unittest import mock  # noqa: E402
 
 from canvassing.models import Address, GeocodeCache  # noqa: E402
 from canvassing.services import address_import  # noqa: E402
@@ -310,10 +360,21 @@ class DistrictInfoTests(TestCase):
         self.assertEqual(ages["unknown"], 1)
 
     def test_low_income_without_census_uses_overlapping_area(self):
-        self.assertEqual(ds.add_low_income(self.organization), 1)
+        self.assertEqual(ds.add_social(self.organization), 1)
         self.district.refresh_from_db()
         # Only the lower-left quarter of each area overlaps the district... both equally: mean of 0.3 and 0.1.
-        self.assertAlmostEqual(self.district.low_income, 0.2, places=3)
+        self.assertAlmostEqual(self.district.social_value, 0.2, places=3)
+
+    def test_own_social_areas_replace_the_shared_ones(self):
+        from canvassing.models import SocialArea
+
+        SocialArea.objects.create(
+            organization=self.organization, source="ai:1", code="x", name="X",
+            geometry=MultiPolygon(square(0, 0, 0.01), srid=4326), low_income=0.9,
+        )
+        ds.add_social(self.organization)
+        self.district.refresh_from_db()
+        self.assertAlmostEqual(self.district.social_value, 0.9, places=3)
 
 
 class ActiveTourTests(TestCase):
@@ -819,3 +880,162 @@ class SharedVoterListTests(TestCase):
         # A list with addresses cannot be deleted (their visits would go with them).
         self.assertEqual(client.delete(f"/api/manage/voter-lists/{self.voter_list.id}/").status_code, 400)
         self.assertEqual(client.delete(f"/api/manage/voter-lists/{other.id}/").status_code, 400 if other.addresses.exists() else 204)
+
+
+# --------------------------------------------------------------------------- AI import of the zones
+
+from types import SimpleNamespace as NS  # noqa: E402
+
+from canvassing.models import DistrictImport  # noqa: E402
+
+
+def vienna_files(x=16.37, y=48.20):
+    geometry = json.dumps({"type": "FeatureCollection", "features": [
+        feature({"id": "0101", "name": "Innere Stadt 1"}, x, y),
+        feature({"id": "0102", "name": "Innere Stadt 2"}, x + 0.01, y),
+        feature({"id": "0103", "name": "Innere Stadt 3"}, x + 0.02, y),
+    ]}).encode()
+    results = ("id,eligible,voters,valid,ÖVP,SPÖ,KPÖ,Grüne\n"
+               "101,1000,700,690,300,200,90,100\n102,1000,600,590,200,200,30,160\n103,1000,500,490,100,250,20,120\n").encode()
+    social = b"id,value\n0101,0.10\n0102,0.20\n0103,0.30\n"
+    return {"districts.geojson": geometry, "results.csv": results, "social.csv": social}
+
+
+class FakeAgentsClient:
+    """The few Managed Agents calls the import makes; `script` is the session's event stream."""
+
+    def __init__(self, script, files):
+        self.sent, self.script, self.outputs = [], script, files
+        sessions = NS(
+            create=lambda **kw: NS(id="sesn_test"),
+            retrieve=lambda **kw: NS(usage=NS(list_cost=NS(amount="87", currency="USD"))),
+            events=NS(stream=self.stream, send=self.send, list=lambda **kw: []),
+        )
+        self.beta = NS(sessions=sessions, files=NS(list=self.list_files))
+        self.files = NS(download=lambda file_id: NS(read=lambda: self.outputs[file_id]))
+
+    def stream(self, session_id):
+        client = self
+
+        class Stream:
+            def __enter__(self):
+                return iter(client.script)
+
+            def __exit__(self, *exc):
+                return False
+
+        return Stream()
+
+    def send(self, session_id, events):
+        self.sent.extend(events)
+
+    def list_files(self, **kw):
+        return [NS(id=name, filename=name, size_bytes=len(data)) for name, data in self.outputs.items()]
+
+
+def tool_use(id, name, data):
+    return NS(id=id, type="agent.custom_tool_use", name=name, input=data)
+
+
+def idle(reason):
+    return NS(id=f"idle-{reason}", type="session.status_idle", stop_reason=NS(type=reason))
+
+
+SUBMIT = {
+    "election": "Nationalratswahl 2024", "level": "bureaux de vote", "sources": ["https://www.data.gv.at/"],
+    "reference_party": {"name": "KPÖ", "columns": ["KPÖ"], "reason": "Membre du Parti de la gauche européenne."},
+    "social": {"label": "Taux de pauvreté", "higher_is_poorer": True, "source": "Statistik Austria"},
+}
+
+
+@override_settings(ANTHROPIC_API_KEY="test", AI_IMPORT_BUDGET_USD=2)
+class AiImportTests(TestCase):
+    def setUp(self):
+        from canvassing.models import AiAgentConfig
+
+        self.organization = Organization.objects.create(
+            code="wien", name="GA Wien", city="Wien", city_lat=48.21, city_lon=16.37, country_code="AT", radius_km=30
+        )
+        AiAgentConfig.objects.create(agent_id="agent_1", agent_version=3, environment_id="env_1")
+        self.job = DistrictImport.objects.create(organization=self.organization, source="ai", hint="Nationalratswahl 2024")
+
+    def run_session(self, script, files):
+        from canvassing.services import ai_import
+
+        client = FakeAgentsClient(script, files)
+        self.job.status = DistrictImport.ImportStatus.RUNNING
+        ai_import.ImportSession(self.job, client).run()
+        return client
+
+    def test_files_are_checked_then_imported(self):
+        far = vienna_files(x=2.35, y=48.85)  # Paris: refused, the agent gets the reason
+        client = self.run_session([tool_use("t1", "submit_import", SUBMIT), idle("end_turn")], far)
+        self.assertTrue(client.sent[1]["is_error"])  # [0] is the user message
+        self.assertIn("within 50 km", client.sent[1]["content"][0]["text"])
+
+        self.job.refresh_from_db()
+        script = [
+            tool_use("t1", "report_progress", {"message": "Carte des bureaux de Vienne trouvée"}),
+            tool_use("t2", "submit_import", SUBMIT),
+            NS(id="m1", type="agent.message", content=[NS(type="text", text="3 bureaux importés.")]),
+            idle("end_turn"),
+        ]
+        client = self.run_session(script, vienna_files())
+        results = [e for e in client.sent if e["type"] == "user.custom_tool_result"]
+        self.assertEqual([r["is_error"] for r in results], [False, False])
+        self.assertEqual(self.job.status, DistrictImport.ImportStatus.DONE)
+        self.assertEqual(self.job.progress_log[0]["message"], "Carte des bureaux de Vienne trouvée")
+        self.assertEqual((self.job.report["cost_usd"], self.job.report["reference_party"]), (0.87, "KPÖ"))
+
+        self.organization.refresh_from_db()
+        self.assertEqual((self.organization.reference_party, self.organization.social_label), ("KPÖ", "Taux de pauvreté"))
+        districts = {d.code: d for d in District.objects.filter(organization=self.organization)}
+        self.assertEqual(districts["0101"].reference_votes, 90)
+        self.assertEqual(districts["0103"].social_value, 0.30)
+        self.assertEqual(districts["0101"].election, "Nationalratswahl 2024")
+
+    def test_budget_reached_fails(self):
+        self.run_session([tool_use("t1", "report_progress", {"message": "Recherche…"}), idle("budget_reached")], {})
+        self.assertEqual(self.job.status, DistrictImport.ImportStatus.FAILED)
+        self.assertIn("Budget de 2", self.job.message)
+
+    def test_agent_giving_up_fails_with_its_explanation(self):
+        script = [NS(id="m1", type="agent.message", content=[NS(type="text", text="Aucune carte des bureaux publiée.")]), idle("end_turn")]
+        self.run_session(script, {})
+        self.assertEqual((self.job.status, self.job.message), (DistrictImport.ImportStatus.FAILED, "Aucune carte des bureaux publiée."))
+
+    def test_reference_party_can_be_changed_afterwards(self):
+        from rest_framework.test import APIClient
+
+        from accounts.models import Role, User
+        from canvassing.services import ai_import
+
+        rows, report = ds.rows_from_normalized(vienna_files()["districts.geojson"], vienna_files()["results.csv"])
+        self.assertEqual(report["party_columns"], ["ÖVP", "SPÖ", "KPÖ", "Grüne"])
+        ai_import.submit(self.job, vienna_files(), SUBMIT)
+        manager = User.objects.create_user(email="resp@wien.test", organization=self.organization, role=Role.MANAGER, is_approved=True)
+        client = APIClient()
+        client.force_authenticate(manager)
+        data = client.get("/api/manage/districts/").json()
+        self.assertEqual(data["party_options"][:2], ["SPÖ", "ÖVP"])  # most voted first
+        self.assertEqual(data["criteria"][0]["label"], "Vote KPÖ")
+
+        response = client.put("/api/manage/score-weights/", {"weights": scoring.DEFAULT_WEIGHTS, "reference_party_columns": ["KPÖ", "Grüne"]}, format="json")
+        self.assertEqual((response.status_code, response.json()["reference_party"]), (200, "KPÖ + Grüne"))
+        self.assertEqual(District.objects.get(organization=self.organization, code="0101").reference_votes, 190)
+        bad = client.put("/api/manage/score-weights/", {"weights": scoring.DEFAULT_WEIGHTS, "reference_party_columns": ["FPÖ"]}, format="json")
+        self.assertEqual(bad.status_code, 400)
+
+    def test_import_button_needs_the_agent(self):
+        from rest_framework.test import APIClient
+
+        from accounts.models import Role, User
+        from canvassing.models import AiAgentConfig
+
+        AiAgentConfig.objects.all().delete()
+        manager = User.objects.create_user(email="resp@wien.test", organization=self.organization, role=Role.MANAGER, is_approved=True)
+        client = APIClient()
+        client.force_authenticate(manager)
+        response = client.post("/api/manage/districts/import/", {"ai": True}, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("make ai-agent", response.json()["detail"])

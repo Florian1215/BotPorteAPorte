@@ -1,8 +1,8 @@
 """Import of the electoral map (polling districts + election results) of an organization.
 
 Two ways in:
-- a preset (one click): the official files of a city are downloaded by the server (Berlin for now);
-- a custom import: a GeoJSON of the districts + a results file (CSV / XLSX), with the columns picked by the user.
+- a city pack (`packs.py`, one click): the official files of the city are downloaded by the server;
+- the AI import (`ai_import.py`): an agent finds and normalizes the files of any other city.
 
 Either way the districts of the organization are replaced, then enriched with the census grid
 (`CensusCell`, loaded once for the whole site by `manage.py load_zensus`) and scored.
@@ -45,8 +45,19 @@ class DistrictRow:
     eligible: float | None = None
     voters: float | None = None
     valid: float | None = None
-    linke: float | None = None
+    reference_votes: float | None = None
     parties: dict = field(default_factory=dict)
+    social_value: float | None = None  # when the indicator comes per district (else from `SocialArea`s)
+
+
+@dataclass
+class ImportSettings:
+    """What an import tells about the organization: its reference party and social indicator."""
+
+    reference_party: str = ""
+    reference_party_columns: list[str] = field(default_factory=list)
+    social_label: str | None = None  # None: unchanged
+    social_higher_is_poorer: bool = True
 
 
 # --------------------------------------------------------------------------- helpers
@@ -160,34 +171,24 @@ def read_table(data: bytes, filename: str, sheet: str | None = None) -> tuple[pd
         raise DistrictImportError(f"Impossible de lire le fichier des résultats : {exc}") from None
 
 
-def inspect_files(geometry_data: bytes, results_data: bytes, results_filename: str, sheet: str | None = None) -> dict:
-    """Columns and a preview of both files, to let the user pick the columns."""
-    features = read_geojson(geometry_data)
-    df, sheets = read_table(results_data, results_filename, sheet)
-    df.columns = [str(c).replace("\n", " ").strip() for c in df.columns]
-    properties = [k for k in features[0] if k != "_geometry"]
-    return {
-        "n_features": len(features),
-        "geometry_properties": properties,
-        "geometry_preview": [{k: _plain(f.get(k)) for k in properties} for f in features[:3]],
-        "sheets": sheets,
-        "sheet": sheet if sheet in sheets else (sheets[0] if sheets else None),
-        "n_rows": len(df),
-        "columns": list(df.columns),
-        "preview": df.head(3).fillna("").to_dict(orient="records"),
-    }
-
-
-def _plain(value):
-    return value if isinstance(value, (str, int, float, bool)) or value is None else str(value)
-
-
 # --------------------------------------------------------------------------- saving
 
 
 @transaction.atomic
-def save_districts(organization, rows: list[DistrictRow], election: str) -> dict:
+def save_districts(organization, rows: list[DistrictRow], election: str, settings: ImportSettings | None = None) -> dict:
     """Replace the districts of the organization, then add census figures and scores."""
+    if settings is not None:
+        fields = []
+        if settings.reference_party_columns:
+            organization.reference_party = (settings.reference_party or settings.reference_party_columns[0])[:128]
+            organization.reference_party_columns = settings.reference_party_columns
+            fields += ["reference_party", "reference_party_columns"]
+        if settings.social_label is not None:
+            organization.social_label = settings.social_label[:128]
+            organization.social_higher_is_poorer = settings.social_higher_is_poorer
+            fields += ["social_label", "social_higher_is_poorer"]
+        if fields:
+            organization.save(update_fields=fields)
     District.objects.filter(organization=organization).delete()
     District.objects.bulk_create(
         [
@@ -200,8 +201,9 @@ def save_districts(organization, rows: list[DistrictRow], election: str) -> dict
                 eligible=r.eligible,
                 voters=r.voters,
                 valid=r.valid,
-                linke=r.linke,
+                reference_votes=r.reference_votes,
                 parties=r.parties,
+                social_value=r.social_value,
             )
             for r in rows
         ],
@@ -220,9 +222,11 @@ def save_districts(organization, rows: list[DistrictRow], election: str) -> dict
             [organization.id],
         )
     n_with_census = add_census(organization)
-    add_low_income(organization)
+    n_with_social = sum(r.social_value is not None for r in rows)
+    if not n_with_social:
+        n_with_social = add_social(organization)
     scoring.rescore_organization(organization)
-    return {"n_districts": len(rows), "n_with_census": n_with_census}
+    return {"n_districts": len(rows), "n_with_census": n_with_census, "n_with_social": n_with_social}
 
 
 def add_census(organization) -> int:
@@ -263,8 +267,9 @@ def add_census(organization) -> int:
     return n
 
 
-def add_low_income(organization) -> int:
-    """Share of low-income residents of each district, from the `SocialArea`s (e.g. Berlin MSS) it overlaps.
+def add_social(organization) -> int:
+    """Social indicator of each district, from the `SocialArea`s it overlaps: the organization's own ones (found
+    by the AI import) or else the shared ones (e.g. Berlin MSS, share of low-income residents).
 
     Population-weighted: each census cell of the district takes the value of the area it lies in, so that a
     district straddling a poor estate and a park is not diluted by the park. Districts without census cells
@@ -274,39 +279,43 @@ def add_low_income(organization) -> int:
 
     table = District._meta.db_table
     social = SocialArea._meta.db_table
+    own = SocialArea.objects.filter(organization=organization).exists()
+    params = {"organization": organization.id}
+    # Only the organization's areas if it has some (another indicator: never mixed with the shared ones).
+    areas = "s.organization_id = %(organization)s" if own else "s.organization_id IS NULL"
     with connection.cursor() as cursor:
-        cursor.execute(f"UPDATE {table} SET low_income = NULL WHERE organization_id = %s", [organization.id])
+        cursor.execute(f"UPDATE {table} SET social_value = NULL WHERE organization_id = %(organization)s", params)
         cursor.execute(
             f"""
-            UPDATE {table} AS d SET low_income = a.value
+            UPDATE {table} AS d SET social_value = a.value
             FROM (
                 SELECT d.id, SUM(c.population * s.low_income) / NULLIF(SUM(c.population), 0) AS value
                 FROM {table} d
                 JOIN {CensusCell._meta.db_table} c ON ST_Contains(d.geometry, c.point)
-                JOIN {social} s ON s.low_income IS NOT NULL AND ST_Contains(s.geometry, c.point)
-                WHERE d.organization_id = %s
+                JOIN {social} s ON s.low_income IS NOT NULL AND {areas} AND ST_Contains(s.geometry, c.point)
+                WHERE d.organization_id = %(organization)s
                 GROUP BY d.id
             ) AS a
             WHERE d.id = a.id
             """,
-            [organization.id],
+            params,
         )
         n = cursor.rowcount
         cursor.execute(
             f"""
-            UPDATE {table} AS d SET low_income = a.value
+            UPDATE {table} AS d SET social_value = a.value
             FROM (
                 SELECT d.id,
                        SUM(ST_Area(ST_Intersection(d.geometry, s.geometry)) * s.low_income)
                          / NULLIF(SUM(ST_Area(ST_Intersection(d.geometry, s.geometry))), 0) AS value
                 FROM {table} d
-                JOIN {social} s ON s.low_income IS NOT NULL AND ST_Intersects(d.geometry, s.geometry)
-                WHERE d.organization_id = %s AND d.low_income IS NULL
+                JOIN {social} s ON s.low_income IS NOT NULL AND {areas} AND ST_Intersects(d.geometry, s.geometry)
+                WHERE d.organization_id = %(organization)s AND d.social_value IS NULL
                 GROUP BY d.id
             ) AS a
             WHERE d.id = a.id
             """,
-            [organization.id],
+            params,
         )
         return n + cursor.rowcount
 
@@ -432,91 +441,95 @@ def age_pyramid(district: District) -> dict:
     return {"groups": groups, "unknown": unknown}
 
 
-# --------------------------------------------------------------------------- custom import
+# --------------------------------------------------------------------------- normalized files (AI import)
+
+NORMALIZED_COUNTS = ("eligible", "voters", "valid")
 
 
-def rows_from_custom(geometry_data: bytes, results_data: bytes, results_filename: str, mapping: dict) -> tuple[list[DistrictRow], dict]:
+def rows_from_normalized(geometry_data: bytes, results_data: bytes, social_data: bytes | None = None) -> tuple[list[DistrictRow], dict]:
+    """The files the AI agent writes (see `ai_import.OUTPUT_CONTRACT`): `districts.geojson` (properties `id`,
+    `name`), `results.csv` (`id`, `eligible`, `voters`, `valid`, then one column of votes per party) and
+    optionally `social.csv` (`id`, `value`)."""
     features = read_geojson(geometry_data)
-    df, _ = read_table(results_data, results_filename, mapping.get("sheet"))
-    df.columns = [str(c).replace("\n", " ").strip() for c in df.columns]
+    if "id" not in features[0]:
+        raise DistrictImportError("districts.geojson : chaque zone doit avoir une propriété « id ».")
+    df, _ = read_table(results_data, "results.csv")
+    df.columns = [str(c).strip() for c in df.columns]
+    if "id" not in df.columns or "valid" not in df.columns:
+        raise DistrictImportError("results.csv : colonnes « id » et « valid » obligatoires.")
+    party_columns = [c for c in df.columns if c not in ("id", "name", *NORMALIZED_COUNTS)]
+    if not party_columns:
+        raise DistrictImportError("results.csv : aucune colonne de parti (une colonne de voix par parti).")
 
-    def column(key, required=False):
-        name = mapping.get(key) or None
-        if name is None and required:
-            raise DistrictImportError(f"Choisis la colonne « {MAPPING_LABELS[key]} ».")
-        if name is not None and name not in df.columns:
-            raise DistrictImportError(f"Colonne introuvable dans le fichier des résultats : {name}")
-        return name
-
-    res_id, linke, valid = column("res_id", True), column("linke", True), column("valid", True)
-    eligible, voters = column("eligible"), column("voters")
-    party_columns = [c for c in (mapping.get("parties") or []) if c in df.columns]
-    geo_id = mapping.get("geo_id")
-    if not geo_id or geo_id not in features[0]:
-        raise DistrictImportError("Choisis la propriété qui identifie le bureau dans le fichier des bureaux.")
-    geo_name = mapping.get("geo_name") or None
-
-    # Results summed per district: some files have several lines per district (e.g. ballot box + postal).
     results: dict[str, dict] = defaultdict(lambda: defaultdict(float))
     for record in df.to_dict(orient="records"):
-        key = normalize_id(record.get(res_id))
+        key = normalize_id(record.get("id"))
         if not key or key == "NAN":
             continue
-        for target, col in [("linke", linke), ("valid", valid), ("eligible", eligible), ("voters", voters)]:
-            if col and (v := to_number(record.get(col))) is not None:
-                results[key][target] += v
-        for col in party_columns:
-            if (v := to_number(record.get(col))) is not None:
-                results[key][f"party:{col}"] += v
+        for col in (*NORMALIZED_COUNTS, *party_columns):
+            if col in df.columns and (v := to_number(record.get(col))) is not None:
+                results[key][col] += v
+
+    social: dict[str, float] = {}
+    if social_data:
+        sdf, _ = read_table(social_data, "social.csv")
+        sdf.columns = [str(c).strip() for c in sdf.columns]
+        if "id" not in sdf.columns or "value" not in sdf.columns:
+            raise DistrictImportError("social.csv : colonnes « id » et « value » obligatoires.")
+        for record in sdf.to_dict(orient="records"):
+            if (v := to_number(record.get("value"))) is not None:
+                social[normalize_id(record.get("id"))] = v
 
     rows, unmatched = [], []
-    by_id = merge_by(features, lambda f: normalize_id(f.get(geo_id)))
-    seen = set(by_id)
-    for key, feature in by_id.items():
+    for key, feature in merge_by(features, lambda f: normalize_id(f.get("id"))).items():
         result = results.get(key)
         if result is None:
-            unmatched.append(str(feature.get(geo_id)))
-        result = result or {}
-        name = str(feature.get(geo_name)) if geo_name and feature.get(geo_name) not in (None, "") else f"Bureau {feature.get(geo_id)}"
+            unmatched.append(str(feature.get("id")))
+            result = {}
+        name = feature.get("name")
         rows.append(
             DistrictRow(
-                code=str(feature.get(geo_id))[:32],
-                name=name,
+                code=str(feature.get("id"))[:32],
+                name=str(name) if name not in (None, "") else f"Zone {feature.get('id')}",
                 geometry=feature["_geometry"],
-                eligible=result.get("eligible") if eligible else None,
-                voters=result.get("voters") if voters else None,
+                eligible=result.get("eligible"),
+                voters=result.get("voters"),
                 valid=result.get("valid"),
-                linke=result.get("linke"),
-                parties={k[6:]: v for k, v in result.items() if k.startswith("party:")},
+                parties={c: result[c] for c in party_columns if c in result},
+                social_value=social.get(key),
             )
         )
-    unused = sorted(set(results) - seen)
     report = {
         "n_without_results": len(unmatched),
         "examples_without_results": unmatched[:10],
-        "n_results_without_district": len(unused),
-        "examples_results_without_district": unused[:10],
+        "n_results_without_district": len(set(results) - {normalize_id(f.get("id")) for f in features}),
+        "party_columns": party_columns,
     }
-    if len(unmatched) == len(rows):
-        raise DistrictImportError(
-            "Aucun bureau ne correspond aux résultats : vérifie les colonnes d'identifiant choisies "
-            f"(exemples côté carte : {', '.join(map(str, [f.get(geo_id) for f in features[:3]]))} ; "
-            f"côté résultats : {', '.join(list(results)[:3])})."
-        )
     return rows, report
 
 
-MAPPING_LABELS = {
-    "geo_id": "identifiant du bureau (carte)",
-    "res_id": "identifiant du bureau (résultats)",
-    "linke": "voix Die Linke",
-    "valid": "suffrages exprimés",
-    "eligible": "inscrit·es",
-    "voters": "votant·es",
-}
+def social_areas_from_geojson(organization, data: bytes, source: str) -> int:
+    """`social.geojson` of the AI import (polygons with a numeric `value`) → the organization's `SocialArea`s."""
+    from ..models import SocialArea
+
+    features = read_geojson(data)
+    areas = []
+    for i, feature in enumerate(features):
+        value = to_number(feature.get("value"))
+        if value is None:
+            continue
+        areas.append(SocialArea(
+            organization=organization, source=source[:32], code=str(feature.get("id") or i)[:32],
+            name=str(feature.get("name") or "")[:255], geometry=feature["_geometry"], low_income=value,
+        ))
+    if not areas:
+        raise DistrictImportError("social.geojson : aucune zone avec une « value » numérique.")
+    SocialArea.objects.filter(organization=organization).delete()
+    SocialArea.objects.bulk_create(areas, batch_size=500, ignore_conflicts=True)
+    return len(areas)
 
 
-# --------------------------------------------------------------------------- Berlin preset
+# --------------------------------------------------------------------------- Berlin (see `packs.py`)
 
 BERLIN_WFS = (
     "https://gdi.berlin.de/services/wfs/wahlgebiete_agh2026?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature"
@@ -525,12 +538,6 @@ BERLIN_WFS = (
 BERLIN_RESULTS = "https://www.wahlen-berlin.de/wahlen/BE2026/Afspraes/agh/DL/DL_BE_AGHBVV2026.xlsx"
 BERLIN_ELECTION = "Abgeordnetenhaus de Berlin, 20/09/2026 (2e voix)"
 BERLIN_FIRST_PARTY_COLUMN = "CDU"
-
-
-def _download(url: str) -> bytes:
-    response = requests.get(url, timeout=HTTP_TIMEOUT, headers={"User-Agent": USER_AGENT})
-    response.raise_for_status()
-    return response.content
 
 
 def rows_from_berlin(geometry_data: bytes, results_data: bytes) -> tuple[list[DistrictRow], dict]:
@@ -587,7 +594,7 @@ def rows_from_berlin(geometry_data: bytes, results_data: bytes) -> tuple[list[Di
                 eligible=num(record["Wahlberechtigte insgesamt"]),
                 voters=round(t["Wählende"], 1),
                 valid=round(t["Gültige Stimmen"], 1),
-                linke=round(t["Die Linke"], 1),
+                reference_votes=round(t["Die Linke"], 1),
                 parties={p: round(t[p], 1) for p in parties if t[p]},
             )
         )
@@ -595,48 +602,46 @@ def rows_from_berlin(geometry_data: bytes, results_data: bytes) -> tuple[list[Di
     return rows, report
 
 
-PRESETS = {
-    "berlin_agh2026": {
-        "label": "Berlin — Abgeordnetenhaus 2026",
-        "description": "2 542 bureaux de vote, résultats définitifs du 20 septembre 2026 (vote par correspondance inclus).",
-    },
-}
-
-
-def run_preset(key: str) -> tuple[list[DistrictRow], dict, str]:
-    if key == "berlin_agh2026":
-        rows, report = rows_from_berlin(_download(BERLIN_WFS), _download(BERLIN_RESULTS))
-        return rows, report, BERLIN_ELECTION
-    raise DistrictImportError("Import inconnu.")
+BERLIN_SETTINGS = ImportSettings(
+    reference_party="Die Linke", reference_party_columns=["Die Linke"],
+    social_label="Part de bas revenus (MSS 2023)", social_higher_is_poorer=True,
+)
 
 
 # --------------------------------------------------------------------------- background run
 
 
-def start_import(job: DistrictImport, mapping: dict | None = None) -> None:
+
+NO_SOCIAL_LABEL = "Indicateur social (aucune donnée)"
+
+
+def start_import(job: DistrictImport) -> None:
     job.status = DistrictImport.ImportStatus.RUNNING
     job.message = ""
     job.save(update_fields=["status", "message"])
-    thread = threading.Thread(target=_run, args=(job.id, mapping or {}), daemon=True)
+    thread = threading.Thread(target=_run, args=(job.id,), daemon=True)
     thread.start()
 
 
-def _run(job_id: int, mapping: dict) -> None:
+def _run(job_id: int) -> None:
+    from . import packs
+
     close_old_connections()
     job = DistrictImport.objects.select_related("organization").get(pk=job_id)
     try:
-        if job.source == "custom":
-            rows, report = rows_from_custom(
-                bytes(job.geometry_file), bytes(job.results_file), job.results_filename, mapping
-            )
-            election = (mapping.get("election") or "").strip()[:128]
-        else:
-            rows, report, election = run_preset(job.source)
-        report.update(save_districts(job.organization, rows, election))
+        result = packs.run(job.source)
+        report = result.report
+        report.update(save_districts(job.organization, result.rows, result.election, result.settings))
+        organization = job.organization
+        if result.social_from_rent:
+            report["n_with_social"] = packs.social_from_rent(organization)
+            scoring.rescore_organization(organization)
+        elif not report.get("n_with_social"):
+            organization.social_label = NO_SOCIAL_LABEL  # the score does without it
+            organization.save(update_fields=["social_label"])
+            scoring.rescore_organization(organization)
         job.status = DistrictImport.ImportStatus.DONE
         job.report = report
-        job.geometry_file = None
-        job.results_file = None
     except DistrictImportError as exc:
         job.status, job.message = DistrictImport.ImportStatus.FAILED, str(exc)
     except requests.RequestException as exc:

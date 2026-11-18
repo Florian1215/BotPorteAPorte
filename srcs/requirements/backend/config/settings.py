@@ -140,6 +140,10 @@ PHOTON_DOMAIN = env("PHOTON_DOMAIN")
 # (each address is sent at most once, see `GeocodeCache.google_tried_at`).
 GOOGLE_MAPS_API_KEY = env("GOOGLE_MAPS_API_KEY")
 GOOGLE_GEOCODING_MONTHLY_LIMIT = int(env("GOOGLE_GEOCODING_MONTHLY_LIMIT", "9000"))
+# AI import of the zones (Claude Managed Agents, see canvassing/services/ai_import.py). Blank key = disabled.
+# The agent is set up once with `make ai-agent`; each import is capped at AI_IMPORT_BUDGET_USD (list price).
+ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY")
+AI_IMPORT_BUDGET_USD = float(env("AI_IMPORT_BUDGET_USD", "2"))
 CANVASSING_MAX_STOPS = int(env("CANVASSING_MAX_STOPS", "250"))
 CANVASSING_TOUR_TIMEOUT_HOURS = int(env("CANVASSING_TOUR_TIMEOUT_HOURS", "24"))
 CANVASSING_DRAFT_TIMEOUT_HOURS = 2

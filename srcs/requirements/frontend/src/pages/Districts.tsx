@@ -1,6 +1,6 @@
 import type { FeatureCollection } from "geojson";
 import L from "leaflet";
-import { ChevronRight, FileUp, LandPlot, RefreshCw, SlidersHorizontal, Sparkles } from "lucide-react";
+import { Bot, ChevronRight, ExternalLink, LandPlot, RefreshCw, SlidersHorizontal, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Marker, useMap, useMapEvents } from "react-leaflet";
 import { useNavigate } from "react-router-dom";
@@ -11,14 +11,14 @@ import type {
   DistrictProgress,
   DistrictImport,
   DistrictMap,
-  ImportInspection,
+  CityPack,
   ScoreCriterionKey,
   ScoreWeights,
 } from "../api/types";
 import { FitBounds, FlyTo, MapLayers } from "../components/map";
 import { BackContext } from "../context/BackContext";
 import { Alert, Button, Card, EmptyState, Field, Loading, SectionTitle, Segmented, Sheet, Spinner, inputClass } from "../components/ui";
-import { CRITERION_FORMAT, CRITERION_HELP, DONE_STOPS, SCORE_CLASSES, doneColor, scoreColor } from "../lib/constants";
+import { CRITERION_FORMAT, CRITERION_HELP, DONE_STOPS, SCORE_CLASSES, doneColor, formatSocial, scoreColor } from "../lib/constants";
 
 type MapDistrict = DistrictMap["districts"][number];
 /** What the colour of the districts tells: their score, or the share of doors done. */
@@ -65,6 +65,8 @@ export default function Districts() {
     const timer = window.setInterval(async () => {
       try {
         const job = await api<DistrictImport | null>("/manage/districts/import/");
+        // Live steps of the AI import.
+        setData((d) => (d && job ? { ...d, import: job } : d));
         if (job?.status !== "running") {
           window.clearInterval(timer);
           load();
@@ -73,7 +75,7 @@ export default function Districts() {
       } catch {
         /* keep polling */
       }
-    }, 3000);
+    }, 4000);
     return () => window.clearInterval(timer);
   }, [running, load]);
 
@@ -346,7 +348,9 @@ function OverviewSheet({
   return (
     <Sheet
       title={`Zones (${shown.toLocaleString("fr")})`}
-      subtitle={data.election || "Bureaux de vote"}
+      subtitle={[data.election || "Bureaux de vote", data.reference_party && `parti de référence : ${data.reference_party}`]
+        .filter(Boolean)
+        .join(" · ")}
       locate={false}
       action={
         <button
@@ -445,6 +449,7 @@ function DistrictSheet({ id }: { id: number }) {
   const p = d.progress;
   const totalWeight = d.score_parts.reduce((sum, part) => sum + (part.rank != null ? part.weight : 0), 0);
   const maxPartyPct = Math.max(1, ...d.parties.map((x) => x.pct ?? 0));
+  const isReference = (name: string) => d.reference_party_columns.includes(name);
 
   return (
     <Sheet
@@ -516,17 +521,17 @@ function DistrictSheet({ id }: { id: number }) {
 
       <SectionTitle>Résultats</SectionTitle>
       <div className="grid grid-cols-2 gap-2">
-        <Metric label="Die Linke" value={formatPct(d.linke_pct)} />
+        <Metric label={d.reference_party || "Parti de référence"} value={formatPct(d.reference_pct)} />
         <Metric label="Participation" value={formatPct(d.turnout_pct)} />
       </div>
       {d.parties.length > 0 && (
         <Card className="space-y-1.5 p-3.5">
           {d.parties.map((party) => (
             <div key={party.name} className="flex items-center gap-2 text-sm">
-              <span className={`w-24 shrink-0 truncate ${party.name === "Die Linke" ? "font-semibold" : "text-zinc-600"}`}>{party.name}</span>
+              <span className={`w-24 shrink-0 truncate ${isReference(party.name) ? "font-semibold" : "text-zinc-600"}`}>{party.name}</span>
               <div className="h-2 flex-1 overflow-hidden rounded-full bg-zinc-100">
                 <div
-                  className={`h-full rounded-full ${party.name === "Die Linke" ? "bg-brand-600" : "bg-zinc-400"}`}
+                  className={`h-full rounded-full ${isReference(party.name) ? "bg-brand-600" : "bg-zinc-400"}`}
                   style={{ width: `${((party.pct ?? 0) / maxPartyPct) * 100}%` }}
                 />
               </div>
@@ -538,26 +543,14 @@ function DistrictSheet({ id }: { id: number }) {
 
       <SectionTitle>Français·es de la liste</SectionTitle>
       <div className="grid grid-cols-2 gap-2">
-        <Metric label="Densité" value={d.density != null ? `${d.density.toLocaleString("fr")} /km²` : "—"} />
+        <Metric label="Densité" value={d.density != null ? `${d.density.toLocaleString("fr")} Français·es/km²` : "—"} />
         <Metric label="18–29 ans" value={formatPct(d.share_18_29 != null ? d.share_18_29 * 100 : null)} />
         <Metric label="65 ans et plus" value={formatPct(d.share_65_plus != null ? d.share_65_plus * 100 : null)} />
       </div>
 
-      <SectionTitle>Population</SectionTitle>
-      {d.population == null ? (
-        <p className="text-sm text-zinc-500">Données de population non chargées pour cette zone.</p>
-      ) : (
-        <div className="grid grid-cols-2 gap-2">
-          <Metric label="Habitant·es" value={d.population.toLocaleString("fr")} />
-          <Metric label="Étranger·es" value={formatPct(d.share_foreign != null ? d.share_foreign * 100 : null)} />
-          <Metric
-            label="Loyer net moyen"
-            value={d.rent_m2 != null ? `${d.rent_m2.toLocaleString("fr", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €/m²` : "—"}
-          />
-        </div>
-      )}
+      <SectionTitle>Quartier</SectionTitle>
       <div className="grid grid-cols-2 gap-2">
-        <Metric label="Bas revenus (minima sociaux)" value={formatPct(d.low_income != null ? d.low_income * 100 : null)} />
+        <Metric label={d.social_label || "Indicateur social"} value={d.social_value != null ? formatSocial(d.social_value) : "—"} />
       </div>
     </Sheet>
   );
@@ -634,6 +627,7 @@ function AgePyramid({ ages }: { ages: DistrictDetail["ages"] }) {
 
 function WeightsSheet({ data, onDone }: { data: DistrictMap; onDone: (changed: boolean) => void }) {
   const [weights, setWeights] = useState<ScoreWeights>(data.weights);
+  const [columns, setColumns] = useState<string[]>(data.reference_party_columns);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const total = Object.values(weights).reduce((a, b) => a + b, 0);
@@ -642,7 +636,11 @@ function WeightsSheet({ data, onDone }: { data: DistrictMap; onDone: (changed: b
     setBusy(true);
     setError(null);
     try {
-      await api("/manage/score-weights/", { method: "PUT", body: weights });
+      const partyChanged = columns.join("|") !== data.reference_party_columns.join("|");
+      await api("/manage/score-weights/", {
+        method: "PUT",
+        body: partyChanged ? { weights, reference_party_columns: columns } : { weights },
+      });
       onDone(true);
     } catch (e) {
       setError(errorMessage(e));
@@ -660,7 +658,7 @@ function WeightsSheet({ data, onDone }: { data: DistrictMap; onDone: (changed: b
           <Button variant="secondary" onClick={() => onDone(false)} disabled={busy}>
             Annuler
           </Button>
-          <Button onClick={save} loading={busy} disabled={total === 0}>
+          <Button onClick={save} loading={busy} disabled={total === 0 || (data.party_options.length > 0 && columns.length === 0)}>
             Recalculer
           </Button>
         </div>
@@ -689,45 +687,39 @@ function WeightsSheet({ data, onDone }: { data: DistrictMap; onDone: (changed: b
         );
       })}
       {total === 0 && <Alert kind="warning">Au moins un critère doit compter.</Alert>}
+
+      {data.party_options.length > 0 && (
+        <>
+          <SectionTitle>Parti de référence</SectionTitle>
+          <p className="-mt-1 text-xs text-zinc-500">
+            Le parti le plus proche de LFI dans le pays. Plusieurs choix si c'était une liste commune : leurs voix s'additionnent.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {data.party_options.map((name) => {
+              const on = columns.includes(name);
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => setColumns(on ? columns.filter((c) => c !== name) : [...columns, name])}
+                  className={`rounded-full px-3 py-1.5 text-xs font-semibold ${on ? "bg-brand-600 text-white" : "bg-zinc-100 text-zinc-700"}`}
+                >
+                  {name}
+                </button>
+              );
+            })}
+          </div>
+          {columns.length === 0 && <Alert kind="warning">Choisis au moins un parti.</Alert>}
+        </>
+      )}
     </Sheet>
   );
 }
 
 // --------------------------------------------------------------------------- import
 
-type Mapping = {
-  geo_id: string;
-  geo_name: string;
-  sheet: string;
-  res_id: string;
-  linke: string;
-  valid: string;
-  eligible: string;
-  voters: string;
-  parties: string[];
-  election: string;
-};
-
-function guess(columns: string[], pattern: RegExp, fallback = ""): string {
-  return columns.find((c) => pattern.test(c)) ?? fallback;
-}
-
-function guessMapping(info: ImportInspection, previous?: Mapping): Mapping {
-  const cols = info.columns;
-  const props = info.geometry_properties;
-  return {
-    geo_id: previous?.geo_id || guess(props, /bezirk|wbz|wahl|stimm|nr|id|code/i, props[0] ?? ""),
-    geo_name: previous?.geo_name ?? "",
-    sheet: info.sheet ?? "",
-    res_id: guess(cols, /bezirk|wbz|stimm|nr|id|code/i, cols[0] ?? ""),
-    linke: guess(cols, /linke/i),
-    valid: guess(cols, /g(ü|ue)ltig|valid/i),
-    eligible: guess(cols, /berechtigt/i),
-    voters: guess(cols, /w(ä|ae)hler|w(ä|ae)hlende|votant/i),
-    parties: [],
-    election: previous?.election ?? "",
-  };
-}
+const FLAGS: Record<string, string> = { DE: "🇩🇪", AT: "🇦🇹", CZ: "🇨🇿", PL: "🇵🇱", RO: "🇷🇴" };
 
 function ImportSheet({
   data,
@@ -741,16 +733,14 @@ function ImportSheet({
   const job = data.import;
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [geometry, setGeometry] = useState<File | null>(null);
-  const [results, setResults] = useState<File | null>(null);
-  const [info, setInfo] = useState<ImportInspection | null>(null);
-  const [mapping, setMapping] = useState<Mapping | null>(null);
+  const [hint, setHint] = useState("");
 
-  const run = async (key: string, action: () => Promise<unknown>) => {
+  const run = async (key: string, body: Record<string, unknown>) => {
     setBusy(key);
     setError(null);
     try {
-      await action();
+      await api("/manage/districts/import/", { method: "POST", body });
+      onStarted();
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -758,55 +748,55 @@ function ImportSheet({
     }
   };
 
-  const startPreset = (preset: string) =>
-    run(preset, async () => {
-      await api("/manage/districts/import/", { method: "POST", body: { preset } });
-      onStarted();
-    });
-
-  const inspect = (sheet?: string) =>
-    run("inspect", async () => {
-      let next: ImportInspection;
-      if (info && sheet !== undefined) {
-        next = await api<ImportInspection>("/manage/districts/import/inspect/", {
-          method: "POST",
-          body: { import_id: info.import_id, sheet },
-        });
-      } else {
-        const body = new FormData();
-        body.append("geometry", geometry!);
-        body.append("results", results!);
-        next = await api<ImportInspection>("/manage/districts/import/inspect/", { method: "POST", body });
-      }
-      setInfo(next);
-      setMapping(guessMapping(next, mapping ?? undefined));
-    });
-
-  const startCustom = () =>
-    run("start", async () => {
-      await api(`/manage/districts/import/${info!.import_id}/start/`, { method: "POST", body: mapping });
-      onStarted();
-    });
+  if (job?.status === "running" && job.source === "ai")
+    return (
+      <Sheet title="L'IA cherche les données" subtitle="Carte des zones, résultats électoraux et indicateur social." locate={false}>
+        <div className="flex items-center gap-3 rounded-2xl bg-zinc-50 p-4 text-sm text-zinc-600 ring-1 ring-zinc-950/5">
+          <Spinner className="size-5 shrink-0 text-brand-600" />
+          Ça prend en général 5 à 20 minutes. Tu peux quitter cette page, l'import continue.
+        </div>
+        {job.hint && <p className="text-sm text-zinc-500">Ta précision : « {job.hint} »</p>}
+        <AiSteps steps={job.progress_log ?? []} running />
+      </Sheet>
+    );
 
   if (job?.status === "running")
     return (
-      <Sheet title="Import en cours" subtitle="Téléchargement des fichiers et calcul des scores." locate={false}>
+      <Sheet title="Import en cours" subtitle="Téléchargement des données officielles et calcul des scores." locate={false}>
         <div className="flex items-center gap-3 rounded-2xl bg-zinc-50 p-4 text-sm text-zinc-600 ring-1 ring-zinc-950/5">
           <Spinner className="size-5 text-brand-600" />
-          Ça prend en général moins d'une minute. Tu peux quitter cette page.
+          Ça prend en général une à trois minutes. Tu peux quitter cette page.
         </div>
       </Sheet>
     );
 
-  const replaceWarning = data.districts.length > 0 && (
-    <Alert kind="warning">
-      L'import remplace les {data.districts.length.toLocaleString("fr")} bureaux actuels. Les tournées passées gardent leurs résultats.
-    </Alert>
+  const [mine, others] = [data.packs.filter((p) => p.recommended), data.packs.filter((p) => !p.recommended)];
+  const packButton = (pack: CityPack) => (
+    <button
+      key={pack.key}
+      onClick={() => run(pack.key, { pack: pack.key })}
+      disabled={busy !== null}
+      className={`flex w-full items-center gap-3 rounded-2xl bg-white p-3.5 text-left ring-1 active:bg-zinc-50 disabled:opacity-60 ${
+        pack.recommended ? "ring-2 ring-brand-500" : "ring-zinc-950/[0.08]"
+      }`}
+    >
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-lg">
+        {busy === pack.key ? <Spinner className="size-5 text-brand-700" /> : FLAGS[pack.country] ?? <LandPlot className="size-5 text-brand-700" />}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex flex-wrap items-baseline gap-x-2">
+          <span className="font-semibold tracking-tight">{pack.city}</span>
+          <span className="text-xs text-zinc-500">{pack.election}</span>
+        </span>
+        <span className="block text-xs text-zinc-500">{pack.description}</span>
+      </span>
+      <ChevronRight className="size-5 shrink-0 text-zinc-300" />
+    </button>
   );
 
   return (
     <Sheet
-      title="Importer les bureaux de vote"
+      title="Importer les zones"
       locate={false}
       action={
         onCancel && (
@@ -817,253 +807,117 @@ function ImportSheet({
       }
     >
       {job?.status === "failed" && <Alert>L'import a échoué : {job.message}</Alert>}
-      {error && <Alert>{error}</Alert>}
-      {replaceWarning}
-      {data.districts.length === 0 && !job && (
-        <EmptyState icon={LandPlot} title="Pas encore de zones">
-        </EmptyState>
+      {job?.status === "failed" && job.source === "ai" && (job.progress_log?.length ?? 0) > 0 && (
+        <details className="text-sm text-zinc-600">
+          <summary className="cursor-pointer">Étapes de l'IA</summary>
+          <AiSteps steps={job.progress_log ?? []} />
+        </details>
       )}
+      {job?.status === "done" && job.source === "ai" && <AiReport job={job} />}
+      {error && <Alert>{error}</Alert>}
+      {data.districts.length > 0 && (
+        <Alert kind="warning">
+          L'import remplace les {data.districts.length.toLocaleString("fr")} zones actuelles. Les tournées passées gardent leurs résultats.
+        </Alert>
+      )}
+      {data.districts.length === 0 && !job && <EmptyState icon={LandPlot} title="Pas encore de zones" />}
 
-      {!info && (
+      {mine.length > 0 && (
         <>
-          <SectionTitle>En un clic</SectionTitle>
-          {data.presets.map((preset) => (
-            <button
-              key={preset.key}
-              onClick={() => startPreset(preset.key)}
-              disabled={busy !== null}
-              className="flex w-full items-center gap-3 rounded-2xl bg-white p-3.5 text-left ring-1 ring-zinc-950/[0.08] active:bg-zinc-50 disabled:opacity-60"
-            >
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700">
-                {busy === preset.key ? <Spinner className="size-5" /> : <LandPlot className="size-5" />}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block font-semibold tracking-tight">{preset.label}</span>
-                <span className="block text-xs text-zinc-500">{preset.description}</span>
-              </span>
-              <ChevronRight className="size-5 shrink-0 text-zinc-300" />
-            </button>
-          ))}
-
-          <SectionTitle>Autre ville</SectionTitle>
-          <Card className="space-y-3 p-3.5">
-            <FilePick
-              label="Carte des bureaux (GeoJSON)"
-              accept=".geojson,.json,application/geo+json,application/json"
-              file={geometry}
-              onPick={setGeometry}
-            />
-            <FilePick label="Résultats par bureau (CSV ou Excel)" accept=".csv,.xlsx,.xls,.txt" file={results} onPick={setResults} />
-            <Button
-              variant="secondary"
-              className="w-full"
-              icon={FileUp}
-              disabled={!geometry || !results}
-              loading={busy === "inspect"}
-              onClick={() => inspect()}
-            >
-              Lire les fichiers
-            </Button>
-          </Card>
+          <SectionTitle>Ta ville</SectionTitle>
+          {mine.map(packButton)}
         </>
       )}
+      <SectionTitle>{mine.length > 0 ? "Autres villes" : "Packs des villes"}</SectionTitle>
+      <p className="-mt-1 text-xs text-zinc-500">
+        Un clic : la carte et les résultats officiels sont téléchargés, puis les scores calculés.
+      </p>
+      {others.map(packButton)}
 
-      {info && mapping && (
-        <MappingForm
-          info={info}
-          mapping={mapping}
-          setMapping={setMapping}
-          onSheet={(sheet) => inspect(sheet)}
-          busy={busy}
-          onStart={startCustom}
-          onBack={() => {
-            setInfo(null);
-            setMapping(null);
-          }}
-        />
+      {!data.ai_unavailable && (
+        <Card className="space-y-3 p-3.5">
+          <div className="flex items-center gap-3">
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700">
+              <Bot className="size-5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold tracking-tight">Importer avec l'IA</p>
+              <p className="text-xs text-zinc-500">
+                Pour une autre ville : l'IA cherche la carte des bureaux de vote (ou des quartiers), les derniers résultats, un indicateur
+                social, et le parti le plus proche de LFI dans le pays.
+              </p>
+            </div>
+          </div>
+          <Field label="Précision (facultatif)">
+            <textarea
+              className={`${inputClass} min-h-16 py-2`}
+              value={hint}
+              maxLength={1000}
+              onChange={(e) => setHint(e.target.value)}
+              placeholder="ex. législatives 2024 plutôt que les municipales, ou un lien vers le portail open data"
+            />
+          </Field>
+          <Button className="w-full" icon={Sparkles} loading={busy === "ai"} disabled={busy !== null} onClick={() => run("ai", { ai: true, hint })}>
+            Lancer l'import par l'IA
+          </Button>
+        </Card>
       )}
     </Sheet>
   );
 }
 
-function FilePick({ label, accept, file, onPick }: { label: string; accept: string; file: File | null; onPick: (f: File | null) => void }) {
-  const input = useRef<HTMLInputElement>(null);
+/** Steps the AI agent reported, oldest first. */
+function AiSteps({ steps, running = false }: { steps: { at: string; message: string }[]; running?: boolean }) {
+  if (steps.length === 0) return running ? <p className="text-sm text-zinc-500">L'IA démarre…</p> : null;
   return (
-    <div>
-      <p className="mb-1.5 text-[13px] font-semibold text-zinc-700">{label}</p>
-      <input ref={input} type="file" accept={accept} className="hidden" onChange={(e) => onPick(e.target.files?.[0] ?? null)} />
-      <button
-        type="button"
-        onClick={() => input.current?.click()}
-        className="flex min-h-11 w-full items-center gap-2 rounded-xl bg-zinc-100 px-3.5 text-left text-sm active:bg-zinc-200"
-      >
-        <FileUp className="size-4 shrink-0 text-zinc-500" />
-        <span className={`truncate ${file ? "font-medium text-zinc-900" : "text-zinc-500"}`}>{file ? file.name : "Choisir un fichier"}</span>
-      </button>
-    </div>
+    <ol className="space-y-2">
+      {steps.map((step, i) => {
+        const current = running && i === steps.length - 1;
+        return (
+          <li key={`${step.at}-${i}`} className="flex gap-2.5 text-sm">
+            <span className={`mt-1.5 size-2 shrink-0 rounded-full ${current ? "animate-pulse bg-brand-600" : "bg-zinc-300"}`} />
+            <span className={current ? "font-medium text-zinc-900" : "text-zinc-600"}>{step.message}</span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
-function ColumnSelect({
-  label,
-  value,
-  options,
-  onChange,
-  optional = false,
-  hint,
-}: {
-  label: string;
-  value: string;
-  options: string[];
-  onChange: (v: string) => void;
-  optional?: boolean;
-  hint?: string;
-}) {
+/** What the last AI import found: election, zones, reference party (and why), social indicator, sources. */
+function AiReport({ job }: { job: DistrictImport }) {
+  const r = job.report;
   return (
-    <Field label={`${label}${optional ? " (facultatif)" : ""}`} hint={hint}>
-      <select className={inputClass} value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">{optional ? "— aucune —" : "— choisir —"}</option>
-        {options.map((o) => (
-          <option key={o} value={o}>
-            {o}
-          </option>
-        ))}
-      </select>
-    </Field>
-  );
-}
-
-function MappingForm({
-  info,
-  mapping,
-  setMapping,
-  onSheet,
-  busy,
-  onStart,
-  onBack,
-}: {
-  info: ImportInspection;
-  mapping: Mapping;
-  setMapping: (m: Mapping) => void;
-  onSheet: (sheet: string) => void;
-  busy: string | null;
-  onStart: () => void;
-  onBack: () => void;
-}) {
-  const set = (patch: Partial<Mapping>) => setMapping({ ...mapping, ...patch });
-  const ready = mapping.geo_id && mapping.res_id && mapping.linke && mapping.valid;
-  const partyOptions = info.columns.filter((c) => ![mapping.res_id, mapping.valid, mapping.eligible, mapping.voters].includes(c));
-  const sample = (prop: string) =>
-    info.geometry_preview
-      .map((f) => f[prop])
-      .filter((v) => v != null && v !== "")
-      .slice(0, 3)
-      .join(", ");
-
-  return (
-    <>
-      <SectionTitle
-        action={
-          <Button variant="ghost" size="sm" onClick={onBack}>
-            Changer de fichiers
-          </Button>
-        }
-      >
-        Carte : {info.n_features.toLocaleString("fr")} bureaux
-      </SectionTitle>
-      <ColumnSelect
-        label="Identifiant du bureau"
-        value={mapping.geo_id}
-        options={info.geometry_properties}
-        onChange={(v) => set({ geo_id: v })}
-        hint={mapping.geo_id ? `Exemples : ${sample(mapping.geo_id)}` : undefined}
-      />
-      <ColumnSelect label="Nom du bureau" optional value={mapping.geo_name} options={info.geometry_properties} onChange={(v) => set({ geo_name: v })} />
-
-      <SectionTitle>Résultats : {info.n_rows.toLocaleString("fr")} lignes</SectionTitle>
-      {info.sheets.length > 1 && (
-        <Field label="Feuille">
-          <select className={inputClass} value={mapping.sheet} onChange={(e) => onSheet(e.target.value)} disabled={busy === "inspect"}>
-            {info.sheets.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </Field>
+    <Card className="space-y-2 p-3.5 text-sm">
+      <p className="font-semibold tracking-tight">Dernier import par l'IA</p>
+      <p className="text-zinc-600">
+        {r.n_districts?.toLocaleString("fr")} {r.level || "zones"}
+        {r.election ? ` · ${r.election}` : ""}
+      </p>
+      {r.reference_party && (
+        <p className="text-zinc-600">
+          <span className="font-semibold text-zinc-900">Parti de référence : {r.reference_party}.</span> {r.reference_reason}
+        </p>
       )}
-      <div className="-mx-1 overflow-x-auto rounded-xl ring-1 ring-zinc-950/[0.07]">
-        <table className="min-w-full text-xs">
-          <thead className="bg-zinc-50 text-left text-zinc-500">
-            <tr>
-              {info.columns.map((c) => (
-                <th key={c} className="px-2 py-1.5 font-semibold whitespace-nowrap">
-                  {c}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {info.preview.map((row, i) => (
-              <tr key={i} className="border-t border-zinc-950/[0.05]">
-                {info.columns.map((c) => (
-                  <td key={c} className="px-2 py-1 whitespace-nowrap tabular-nums">
-                    {row[c]}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <ColumnSelect
-        label="Identifiant du bureau"
-        value={mapping.res_id}
-        options={info.columns}
-        onChange={(v) => set({ res_id: v })}
-        hint="Doit correspondre à l'identifiant choisi sur la carte (les zéros en tête sont ignorés)."
-      />
-      <ColumnSelect label="Voix Die Linke" value={mapping.linke} options={info.columns} onChange={(v) => set({ linke: v })} />
-      <ColumnSelect label="Suffrages exprimés" value={mapping.valid} options={info.columns} onChange={(v) => set({ valid: v })} />
-      <ColumnSelect
-        label="Inscrit·es"
-        optional
-        value={mapping.eligible}
-        options={info.columns}
-        onChange={(v) => set({ eligible: v })}
-        hint="Avec les votant·es, donne l'abstention."
-      />
-      <ColumnSelect label="Votant·es" optional value={mapping.voters} options={info.columns} onChange={(v) => set({ voters: v })} />
-
-      <Field label="Partis à afficher dans le détail (facultatif)">
-        <div className="flex flex-wrap gap-1.5">
-          {partyOptions.map((c) => {
-            const on = mapping.parties.includes(c);
-            return (
-              <button
-                key={c}
-                type="button"
-                onClick={() => set({ parties: on ? mapping.parties.filter((p) => p !== c) : [...mapping.parties, c] })}
-                className={`rounded-full px-3 py-1.5 text-xs font-semibold ${on ? "bg-zinc-900 text-white" : "bg-zinc-100 text-zinc-700"}`}
-              >
-                {c}
-              </button>
-            );
-          })}
-        </div>
-      </Field>
-      <Field label="Nom de l'élection (facultatif)">
-        <input
-          className={inputClass}
-          value={mapping.election}
-          placeholder="ex. Bundestag 2025 (2e voix)"
-          onChange={(e) => set({ election: e.target.value })}
-        />
-      </Field>
-
-      <Button className="w-full" icon={Sparkles} disabled={!ready} loading={busy === "start"} onClick={onStart}>
-        Importer et calculer les scores
-      </Button>
-    </>
+      <p className="text-zinc-600">
+        {r.social_label
+          ? `Indicateur social : ${r.social_label}${r.social_source ? ` (${r.social_source})` : ""}, pour ${r.n_with_social ?? 0} zones.`
+          : "Pas d'indicateur social trouvé : le score s'en passe."}
+      </p>
+      {r.notes && <p className="text-zinc-500">{r.notes}</p>}
+      {(r.sources?.length ?? 0) > 0 && (
+        <ul className="space-y-1">
+          {r.sources!.map((url) => (
+            <li key={url} className="flex min-w-0 items-center gap-1.5">
+              <ExternalLink className="size-3.5 shrink-0 text-zinc-400" />
+              <a href={url} target="_blank" rel="noreferrer noopener" className="truncate text-brand-700 underline">
+                {url}
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+      {r.cost_usd != null && <p className="text-xs text-zinc-400">Coût de l'import : {r.cost_usd.toLocaleString("fr")} $</p>}
+    </Card>
   );
 }

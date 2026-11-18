@@ -58,6 +58,13 @@ class Organization(models.Model):
     # no media volume to share between containers.
     # Weight of each criterion in the score of the polling districts (see canvassing/services/scoring.py).
     score_weights = models.JSONField("pondération du score", default=dict, blank=True)
+    # The party standing in for LFI in the country (Die Linke, KPÖ, PTB…): its votes are summed from the parties
+    # of the imported results whose names are listed in `reference_party_columns` (several for joint lists).
+    reference_party = models.CharField("parti de référence", max_length=128, blank=True, default="Die Linke")
+    reference_party_columns = models.JSONField("colonnes du parti de référence", default=list, blank=True)
+    # Social indicator of the zones (share of low-income residents, poverty rate, median income…).
+    social_label = models.CharField("indicateur social", max_length=128, blank=True, default="Bas revenus")
+    social_higher_is_poorer = models.BooleanField("plus haut = plus pauvre", default=True)
     logo = models.BinaryField(null=True, blank=True, editable=False)
     logo_content_type = models.CharField(max_length=32, blank=True, default="", editable=False)
     logo_updated_at = models.DateTimeField(null=True, blank=True, editable=False)

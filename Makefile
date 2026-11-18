@@ -52,7 +52,7 @@ exec		:
 			$(COMPOSE) $(FLAGS) $@ $(SERVICE) $(DSHELL)
 
 ################################################### DJANGO HELPERS #####################################################
-.PHONY: migrate makemigrations superuser shell seed import load-zensus load-social
+.PHONY: migrate makemigrations superuser shell seed import load-zensus load-social pack-areas ai-agent
 migrate		:
 			$(MANAGE) migrate
 makemigrations:
@@ -67,8 +67,20 @@ seed		:
 import		:
 			$(MANAGE) import_addresses $(FILE) $(if $(LIST),--list "$(LIST)",--organization $(ORG))
 
+# Census grid (density, rent = social indicator of the German city packs): all of Germany, or BBOX=lon,lat,lon,lat
+load-zensus:
+			$(MANAGE) load_zensus $(if $(BBOX),--bbox $(BBOX),)
+
 load-social:
 			$(MANAGE) load_social_index
+
+# Neighbourhood outlines of the city packs without a polling-district map (stored in the repository)
+pack-areas:
+			$(MANAGE) pack_areas
+
+# AI import of the zones: create (or update) the Claude agent once ANTHROPIC_API_KEY is set in srcs/.env
+ai-agent:
+			$(MANAGE) setup_ai_agent
 
 ####################################################### CLEANING #######################################################
 .PHONY: clean

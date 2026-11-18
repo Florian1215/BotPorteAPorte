@@ -7,7 +7,6 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import PermissionDenied
-from rest_framework.parsers import JSONParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -27,6 +26,7 @@ from .serializers import (
     with_outline,
     tour_to_dict,
 )
+from .services import ai_import, packs
 from .services import districts as district_service
 from .services import elections as election_service
 from .services import scoring
@@ -257,9 +257,11 @@ class ManageDistrictListView(DistrictManagerView):
                     for d in districts
                 ],
                 "weights": scoring.weights_of(organization),
-                "criteria": [{"key": c.key, "label": c.label} for c in scoring.CRITERIA],
+                "criteria": [{"key": c.key, "label": c.label} for c in scoring.criteria_for(organization)],
+                **reference_party_to_dict(organization),
                 "import": import_to_dict(last_import(organization)),
-                "presets": [{"key": k, **v} for k, v in district_service.PRESETS.items()],
+                "packs": packs.catalog(organization),
+                "ai_unavailable": ai_import.unavailable_reason(),
                 **progress_election(election),
             }
         )
@@ -275,12 +277,38 @@ class ManageDistrictDetailView(DistrictManagerView):
         return Response({**district_detail(district, progress), **progress_election(election)})
 
 
+def party_options(organization) -> list[str]:
+    """Parties found in the organization's results (to pick the reference party), most voted first."""
+    from django.db import connection
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"""
+            SELECT p.key FROM {District._meta.db_table} d, jsonb_each_text(d.parties) p
+            WHERE d.organization_id = %s
+            GROUP BY p.key ORDER BY SUM(NULLIF(p.value, '')::float) DESC NULLS LAST
+            """,
+            [organization.id],
+        )
+        return [row[0] for row in cursor.fetchall()]
+
+
+def reference_party_to_dict(organization) -> dict:
+    return {
+        "reference_party": organization.reference_party,
+        "reference_party_columns": organization.reference_party_columns or [],
+        "party_options": party_options(organization),
+        "social_label": organization.social_label,
+        "social_higher_is_poorer": organization.social_higher_is_poorer,
+    }
+
+
 def district_detail(d: District, progress: dict) -> dict:
     def pct(num, den):
         return round(100 * num / den, 1) if num is not None and den else None
 
     parties = sorted(d.parties.items(), key=lambda kv: -kv[1])
-    # Same figures as in the score: the French voters of the list (density, ages), not the census.
+    # Same figures as in the score: the French voters of the list (density, ages), never the city's population.
     french = scoring.french_stats(d.organization_id, [d.id]).get(d.id)
     density = (french.count if french else 0) / d.area_km2 if d.area_km2 else None
     return {
@@ -289,21 +317,21 @@ def district_detail(d: District, progress: dict) -> dict:
         "eligible": d.eligible,
         "voters": d.voters,
         "valid": d.valid,
-        "linke": d.linke,
-        "linke_pct": pct(d.linke, d.valid),
+        "reference_party": d.organization.reference_party,
+        "reference_party_columns": d.organization.reference_party_columns or [],
+        "reference_votes": d.reference_votes,
+        "reference_pct": pct(d.reference_votes, d.valid),
         "turnout_pct": pct(d.voters, d.eligible),
         "parties": [{"name": name, "votes": votes, "pct": pct(votes, d.valid)} for name, votes in parties[:6]],
-        "population": d.population,
         "area_km2": round(d.area_km2, 3),
         "density": round(density) if density is not None else None,
         "share_18_29": french.share_18_29 if french else None,
         "share_65_plus": french.share_65_plus if french else None,
-        "share_foreign": d.share_foreign,
-        "rent_m2": d.rent_m2,
-        "low_income": d.low_income,
+        "social_label": d.organization.social_label,
+        "social_value": d.social_value,
         "score_parts": [
             {"key": c.key, "label": c.label, **(d.score_parts.get(c.key) or {"value": None, "rank": None, "weight": 0})}
-            for c in scoring.CRITERIA
+            for c in scoring.criteria_for(d.organization)
         ],
         "progress": progress,
         "ages": district_service.age_pyramid(d),
@@ -311,11 +339,13 @@ def district_detail(d: District, progress: dict) -> dict:
 
 
 STALE_IMPORT = timedelta(minutes=30)
+STALE_AI_IMPORT = timedelta(minutes=50)  # the agent may work up to 40 minutes
 
 
 def last_import(organization) -> DistrictImport | None:
-    job = DistrictImport.objects.filter(organization=organization).defer("geometry_file", "results_file").first()
-    if job and job.status == DistrictImport.ImportStatus.RUNNING and timezone.now() - job.created_at > STALE_IMPORT:
+    job = DistrictImport.objects.filter(organization=organization).first()
+    stale = STALE_AI_IMPORT if job and job.source == "ai" else STALE_IMPORT
+    if job and job.status == DistrictImport.ImportStatus.RUNNING and timezone.now() - job.created_at > stale:
         job.status = DistrictImport.ImportStatus.FAILED
         job.message = "L'import a été interrompu (redémarrage du serveur ?). Relance-le."
         DistrictImport.objects.filter(pk=job.pk).update(status=job.status, message=job.message)
@@ -331,22 +361,33 @@ def import_to_dict(job: DistrictImport | None) -> dict | None:
         "status": job.status,
         "message": job.message,
         "report": job.report,
+        "hint": job.hint,
+        "progress_log": job.progress_log or [],
         "created_at": job.created_at,
         "finished_at": job.finished_at,
     }
 
 
 class DistrictImportView(DistrictManagerView):
-    """GET: the last import (polled while it runs). POST {preset}: one-click import of a city."""
+    """GET: the last import (polled while it runs). POST {pack}: one-click import of a city (`services/packs.py`).
+    POST {ai: true, hint}: the AI agent finds the data of the organization's city (`services/ai_import.py`)."""
 
     def get(self, request):
         return Response(import_to_dict(last_import(self.organization)))
 
     def post(self, request):
-        preset = request.data.get("preset")
-        if preset not in district_service.PRESETS:
-            return error("Import inconnu.")
-        job = self.new_job(preset)
+        if request.data.get("ai"):
+            if reason := ai_import.unavailable_reason():
+                return error(reason)
+            if self.organization.city_lat is None:
+                return error("L'organisation n'a pas de ville : impossible de chercher ses données.")
+            job = self.new_job("ai", hint=str(request.data.get("hint") or "").strip()[:1000])
+            ai_import.start(job)
+            return Response(import_to_dict(job), status=status.HTTP_202_ACCEPTED)
+        pack = request.data.get("pack") or request.data.get("preset")
+        if pack not in packs.PACKS:
+            return error("Pack inconnu.")
+        job = self.new_job(pack)
         district_service.start_import(job)
         return Response(import_to_dict(job), status=status.HTTP_202_ACCEPTED)
 
@@ -357,62 +398,31 @@ class DistrictImportView(DistrictManagerView):
         return DistrictImport.objects.create(organization=self.organization, user=self.request.user, source=source, **fields)
 
 
-class DistrictImportInspectView(DistrictImportView):
-    """Custom import, step 1: upload the two files (or pick another sheet) → columns and preview."""
-
-    parser_classes = [MultiPartParser, JSONParser]
-
-    def post(self, request):
-        sheet = request.data.get("sheet") or None
-        job_id = request.data.get("import_id")
-        if job_id:
-            job = get_object_or_404(
-                DistrictImport, pk=job_id, organization=self.organization, status=DistrictImport.ImportStatus.PENDING
-            )
-        else:
-            geometry, results = request.FILES.get("geometry"), request.FILES.get("results")
-            if geometry is None or results is None:
-                return error("Envoie le fichier des bureaux (GeoJSON) et le fichier des résultats (CSV ou Excel).")
-            job = self.new_job(
-                "custom",
-                geometry_file=geometry.read(),
-                results_file=results.read(),
-                results_filename=results.name,
-            )
-        try:
-            info = district_service.inspect_files(bytes(job.geometry_file), bytes(job.results_file), job.results_filename, sheet)
-        except district_service.DistrictImportError as exc:
-            job.delete()
-            return error(str(exc))
-        return Response({"import_id": job.id, **info})
-
-
-class DistrictImportStartView(DistrictManagerView):
-    """Custom import, step 2: the chosen columns → run the import."""
-
-    def post(self, request, pk):
-        job = get_object_or_404(
-            DistrictImport, pk=pk, organization=self.organization, status=DistrictImport.ImportStatus.PENDING
-        )
-        mapping = request.data if isinstance(request.data, dict) else {}
-        district_service.start_import(job, dict(mapping))
-        return Response(import_to_dict(job), status=status.HTTP_202_ACCEPTED)
-
-
 class ScoreWeightsView(DistrictManagerView):
     def get(self, request):
         return Response(scoring.weights_of(self.organization))
 
     def put(self, request):
+        """Weights, and optionally the reference party: {reference_party_columns: [...], reference_party: "…"}."""
+        data = request.data if isinstance(request.data, dict) else {}
         try:
-            weights = scoring.clean_weights(request.data if isinstance(request.data, dict) else {})
+            weights = scoring.clean_weights(data.get("weights", data))
         except ValueError as exc:
             return error(str(exc))
         organization = self.organization
         organization.score_weights = weights
-        organization.save(update_fields=["score_weights"])
+        fields = ["score_weights"]
+        if "reference_party_columns" in data:
+            options = set(party_options(organization))
+            columns = [str(c) for c in (data.get("reference_party_columns") or []) if str(c) in options]
+            if not columns:
+                return error("Choisis au moins un parti de référence parmi les résultats importés.")
+            organization.reference_party_columns = columns
+            organization.reference_party = (str(data.get("reference_party") or "").strip() or " + ".join(columns))[:128]
+            fields += ["reference_party_columns", "reference_party"]
+        organization.save(update_fields=fields)
         scoring.rescore_organization(organization)
-        return Response(weights)
+        return Response({"weights": weights, **reference_party_to_dict(organization)})
 
 
 class NearbyAddressesView(CanvasserView):

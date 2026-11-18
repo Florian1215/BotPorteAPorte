@@ -77,17 +77,23 @@ def french_stats(organization_id: int, district_ids: list[int] | None = None) ->
         }
 
 
-CRITERIA = [
-    Criterion("linke", "Vote Die Linke", lambda d: _ratio(d.linke, d.valid)),
-    Criterion("abstention", "Abstention", lambda d: 1 - d.voters / d.eligible if d.voters is not None and d.eligible else None),
-    # Among the French voters of the list (set by `rescore_organization` as `french_18_29`), not the census.
-    Criterion("young", "18–29 ans", lambda d: getattr(d, "french_18_29", None)),
-    Criterion("density", "Densité", _density),
-    Criterion("low_income", "Bas revenus", lambda d: d.low_income),
-]
-CRITERIA_BY_KEY = {c.key: c for c in CRITERIA}
+def criteria_for(organization=None) -> list[Criterion]:
+    """The criteria of an organization's score: its reference party and its social indicator."""
+    party = (getattr(organization, "reference_party", "") or "parti de référence").strip()
+    social = (getattr(organization, "social_label", "") or "Indicateur social").strip()
+    poorer_is_higher = getattr(organization, "social_higher_is_poorer", True)
+    return [
+        Criterion("party", f"Vote {party}", lambda d: _ratio(d.reference_votes, d.valid)),
+        Criterion("abstention", "Abstention", lambda d: 1 - d.voters / d.eligible if d.voters is not None and d.eligible else None),
+        # Among the French voters of the list (set by `rescore_organization` as `french_18_29`), not the census.
+        Criterion("young", "18–29 ans", lambda d: getattr(d, "french_18_29", None)),
+        Criterion("density", "Densité", _density),
+        # The poorer the better: a median income counts the other way round.
+        Criterion("social", social, lambda d: d.social_value, higher_is_better=poorer_is_higher),
+    ]
 
-DEFAULT_WEIGHTS = {"linke": 50, "abstention": 15, "young": 15, "density": 10, "low_income": 10}
+
+DEFAULT_WEIGHTS = {"party": 50, "abstention": 15, "young": 15, "density": 10, "social": 10}
 
 
 def weights_of(organization) -> dict[str, int]:
@@ -127,11 +133,12 @@ def percentile_ranks(values: dict[int, float]) -> dict[int, float]:
     return ranks
 
 
-def compute_scores(districts: list[District], weights: dict[str, int]) -> None:
+def compute_scores(districts: list[District], weights: dict[str, int], criteria: list[Criterion] | None = None) -> None:
     """Set `score` and `score_parts` on the districts (not saved)."""
+    criteria = criteria or criteria_for()
     ranks: dict[str, dict[int, float]] = {}
     raw: dict[str, dict[int, float]] = {}
-    for criterion in CRITERIA:
+    for criterion in criteria:
         values = {d.id: v for d in districts if (v := criterion.value(d)) is not None}
         raw[criterion.key] = values
         r = percentile_ranks(values)
@@ -141,7 +148,7 @@ def compute_scores(districts: list[District], weights: dict[str, int]) -> None:
         parts = {}
         total_weight = 0
         total = 0.0
-        for criterion in CRITERIA:
+        for criterion in criteria:
             weight = weights.get(criterion.key, 0)
             rank = ranks[criterion.key].get(d.id)
             parts[criterion.key] = {
@@ -156,14 +163,24 @@ def compute_scores(districts: list[District], weights: dict[str, int]) -> None:
         d.score_parts = parts
 
 
+def reference_votes(parties: dict, columns: list[str]) -> float | None:
+    """Votes of the reference party: the sum of its columns (several for joint lists); None if none is there."""
+    found = [parties[c] for c in columns if c in parties and parties[c] is not None]
+    return sum(found) if found else None
+
+
 @transaction.atomic
 def rescore_organization(organization) -> int:
     districts = list(District.objects.filter(organization=organization))
+    columns = organization.reference_party_columns or []
+    if columns:  # the reference party can be changed after the import: its votes come from the parties
+        for d in districts:
+            d.reference_votes = reference_votes(d.parties or {}, columns)
     stats = french_stats(organization.id)
     for d in districts:
         f = stats.get(d.id)
         d.n_french = f.count if f else 0
         d.french_18_29 = f.share_18_29 if f else None
-    compute_scores(districts, weights_of(organization))
-    District.objects.bulk_update(districts, ["score", "score_parts"], batch_size=500)
+    compute_scores(districts, weights_of(organization), criteria_for(organization))
+    District.objects.bulk_update(districts, ["reference_votes", "score", "score_parts"], batch_size=500)
     return len(districts)

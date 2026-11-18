@@ -156,7 +156,7 @@ export type District = {
 /** `n_total`: French voters of the current election in the district, `n_done`: those done. */
 export type Area = District & { n_to_visit: number; done_pct: number; n_total: number; n_done: number };
 
-export type ScoreCriterionKey = "linke" | "abstention" | "young" | "density" | "low_income";
+export type ScoreCriterionKey = "party" | "abstention" | "young" | "density" | "social";
 export type ScoreWeights = Record<ScoreCriterionKey, number>;
 
 export type DistrictImport = {
@@ -171,7 +171,21 @@ export type DistrictImport = {
     examples_without_results?: string[];
     n_results_without_district?: number;
     examples_results_without_district?: string[];
+    /** AI import: what the agent found. */
+    n_with_social?: number;
+    election?: string;
+    level?: string;
+    sources?: string[];
+    notes?: string;
+    reference_party?: string;
+    reference_reason?: string;
+    social_label?: string | null;
+    social_source?: string;
+    cost_usd?: number;
   };
+  /** AI import: what the responsable asked, and the agent's steps so far. */
+  hint?: string;
+  progress_log?: { at: string; message: string }[];
   created_at: string;
   finished_at: string | null;
 };
@@ -190,7 +204,21 @@ export type DistrictMap = ProgressElections & {
   weights: ScoreWeights;
   criteria: { key: ScoreCriterionKey; label: string }[];
   import: DistrictImport | null;
-  presets: { key: string; label: string; description: string }[];
+  /** One-click imports of the cities with official open data, the organization's city first. */
+  packs: CityPack[];
+  /** Why the AI import is not available on this server, null when it is. */
+  ai_unavailable: string | null;
+} & ReferenceParty;
+
+/** The organization's party standing in for LFI, and its social indicator. */
+export type ReferenceParty = {
+  reference_party: string;
+  /** Parties of the results whose votes are summed (several for joint lists). */
+  reference_party_columns: string[];
+  /** Parties found in the imported results, most voted first. */
+  party_options: string[];
+  social_label: string;
+  social_higher_is_poorer: boolean;
 };
 
 export type DistrictDetail = District & ProgressElections & {
@@ -199,19 +227,19 @@ export type DistrictDetail = District & ProgressElections & {
   eligible: number | null;
   voters: number | null;
   valid: number | null;
-  linke: number | null;
-  linke_pct: number | null;
+  reference_party: string;
+  reference_party_columns: string[];
+  reference_votes: number | null;
+  reference_pct: number | null;
   turnout_pct: number | null;
   parties: { name: string; votes: number; pct: number | null }[];
-  population: number | null;
   area_km2: number;
   density: number | null;
   share_18_29: number | null;
   share_65_plus: number | null;
-  share_foreign: number | null;
-  rent_m2: number | null;
-  /** Share (0–1) of residents living on minimum social benefits (Berlin MSS), null without data. */
-  low_income: number | null;
+  /** The organization's social indicator (share 0–1, rate or income), null without data. */
+  social_label: string;
+  social_value: number | null;
   score_parts: { key: ScoreCriterionKey; label: string; value: number | null; rank: number | null; weight: number }[];
   progress: DistrictProgress;
   /** Age of the French voters of the list living in the district (year of birth). */
@@ -231,16 +259,19 @@ export type DistrictProgress = {
   done_pct: number;
 };
 
-export type ImportInspection = {
-  import_id: number;
-  n_features: number;
-  geometry_properties: string[];
-  geometry_preview: Record<string, unknown>[];
-  sheets: string[];
-  sheet: string | null;
-  n_rows: number;
-  columns: string[];
-  preview: Record<string, string>[];
+export type CityPack = {
+  key: string;
+  city: string;
+  /** ISO country code. */
+  country: string;
+  election: string;
+  /** "bureaux de vote", "quartiers", "arrondissements"… */
+  level: string;
+  description: string;
+  sources: string[];
+  label: string;
+  /** The pack of the organization's city. */
+  recommended: boolean;
 };
 
 export type NearbyResponse = { total: number; truncated: boolean; addresses: AddressDTO[] };

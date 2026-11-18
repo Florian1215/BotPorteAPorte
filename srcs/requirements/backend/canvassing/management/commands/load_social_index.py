@@ -89,6 +89,6 @@ class Command(BaseCommand):
         )
         for organization in organizations:
             with transaction.atomic():
-                n = district_service.add_low_income(organization)
+                n = district_service.add_social(organization)
                 scoring.rescore_organization(organization)
             self.stdout.write(f"{organization.name}: {n} districts with a low-income share.")

@@ -13,7 +13,7 @@ from ..models import Address, Election, Status
 # Statuses that hold from one election to the next.
 KEPT_STATUSES = (Status.DO_NOT_CONTACT, Status.FAILURE)
 # Statuses that are only valid for the election during which they were given.
-RESET_STATUSES = (Status.COMMITMENT_TO_VOTE, Status.GOOD_CONVERSATION)
+RESET_STATUSES = (Status.COMMITMENT_TO_VOTE, Status.GOOD_CONVERSATION, Status.NOT_INTERESTED)
 
 
 def addresses_to_reset():

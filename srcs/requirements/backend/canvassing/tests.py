@@ -784,6 +784,16 @@ class ClearResultTests(TestCase):
         self.assertEqual((stop.result, stop.visited_at, address.status), ("", None, Status.PLANNED))
         self.assertFalse(Visit.objects.filter(stop=stop).exists())
 
+        # "Peu intéressée": met, done for this election, back to visit at the next one; not a success.
+        client.post(url, {"stop_ids": [stop.id], "result": "not_interested"}, content_type="application/json")
+        address.refresh_from_db()
+        self.assertEqual(address.status, Status.NOT_INTERESTED)
+        from canvassing.services.tours import tour_summary
+
+        summary = tour_summary(tour)
+        self.assertEqual((summary["not_interested"], summary["total_success"]), (1, 0))
+        self.assertEqual(election_service.addresses_to_reset().filter(pk=address.pk).count(), 1)
+
 
 class BrevoBackendTests(SimpleTestCase):
     def test_email_is_posted_to_brevo(self):

@@ -481,7 +481,7 @@ export function ResultButtons({
   return (
     <div className="grid grid-cols-2 gap-2 short:gap-1.5">
       {RESULTS.map((r, i) => {
-        const last = i === RESULTS.length - 1;
+        const last = RESULTS.length % 2 === 1 && i === RESULTS.length - 1; // odd count: full-width last button
         const isSelected = selected === r.value;
         const dimmed = selected !== null && !isSelected;
         if (r.value === "address_to_retry" && (split || isSelected))

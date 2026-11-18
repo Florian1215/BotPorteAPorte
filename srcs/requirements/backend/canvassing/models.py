@@ -16,13 +16,17 @@ class Status(models.IntegerChoices):
     COMMITMENT_TO_VOTE = 4, "Promesse de vote"
     GOOD_CONVERSATION = 5, "Bonne conversation"
     DO_NOT_CONTACT = 6, "Ne plus contacter"
+    NOT_INTERESTED = 7, "Personne peu intéressée"  # web app only (not in the bot)
 
 
 class VisitResult(models.TextChoices):
-    """Feedback a militant gives after ringing at a door (same 5 options as the bot)."""
+    """Feedback a militant gives after ringing at a door (the bot's 5 options + "peu intéressée")."""
 
     COMMITMENT_TO_VOTE = "commitment_to_vote", "Promesse de vote"
     GOOD_CONVERSATION = "good_conversation", "Bonne conversation"
+    # Met, but not interested: no need to come back during this election (unlike "ne plus déranger", it does not
+    # carry over to the next one).
+    NOT_INTERESTED = "not_interested", "Personne peu intéressée"
     DO_NOT_CONTACT = "do_not_contact", "Conversation stérile / Ne plus déranger"
     ADDRESS_TO_RETRY = "address_to_retry", "Personne absente / Repasser"
     ADDRESS_FAILURE = "address_failure", "Adresse introuvable"
@@ -38,6 +42,7 @@ class AbsentDetail(models.TextChoices):
 RESULT_TO_STATUS = {
     VisitResult.COMMITMENT_TO_VOTE: Status.COMMITMENT_TO_VOTE,
     VisitResult.GOOD_CONVERSATION: Status.GOOD_CONVERSATION,
+    VisitResult.NOT_INTERESTED: Status.NOT_INTERESTED,
     VisitResult.DO_NOT_CONTACT: Status.DO_NOT_CONTACT,
     VisitResult.ADDRESS_TO_RETRY: Status.TO_VISIT,  # released so that someone can come back later
     VisitResult.ADDRESS_FAILURE: Status.FAILURE,

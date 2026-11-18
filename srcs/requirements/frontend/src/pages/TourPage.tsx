@@ -66,6 +66,7 @@ const ABSENT_DETAIL_ICONS: Record<AbsentDetail, LucideIcon> = { leaflet: Mail, m
 const LAST_VISIT_TONES: Record<ResultValue, string> = {
   commitment_to_vote: "bg-emerald-50 text-emerald-800 ring-emerald-600/15",
   good_conversation: "bg-teal-50 text-teal-800 ring-teal-600/15",
+  not_interested: "bg-violet-50 text-violet-800 ring-violet-600/15",
   do_not_contact: "bg-zinc-100 text-zinc-700 ring-zinc-500/15",
   address_to_retry: "bg-amber-50 text-amber-800 ring-amber-500/20",
   address_failure: "bg-red-50 text-red-800 ring-red-600/15",
@@ -545,8 +546,9 @@ function TourSummary({ tour }: { tour: Tour }) {
         <StatTile value={s.address_to_retry} label={`absent·e${s.address_to_retry > 1 ? "s" : ""}`} icon={RESULT_BY_VALUE.address_to_retry.icon} />
       </div>
 
-      {(s.do_not_contact > 0 || s.address_failure > 0 || s.not_visited > 0) && (
+      {(s.not_interested > 0 || s.do_not_contact > 0 || s.address_failure > 0 || s.not_visited > 0) && (
         <Card className="divide-y divide-zinc-950/5">
+          {s.not_interested > 0 && <Row label="Personnes peu intéressées" value={s.not_interested} />}
           {s.do_not_contact > 0 && <Row label="Ne pas déranger" value={s.do_not_contact} />}
           {s.address_failure > 0 && <Row label="Adresses introuvables" value={s.address_failure} />}
           {s.not_visited > 0 && <Row label="Adresses non visitées (libérées)" value={s.not_visited} />}

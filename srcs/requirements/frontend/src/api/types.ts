@@ -74,6 +74,7 @@ export type Member = {
 export type ResultValue =
   | "commitment_to_vote"
   | "good_conversation"
+  | "not_interested"
   | "do_not_contact"
   | "address_to_retry"
   | "address_failure";
@@ -309,7 +310,7 @@ export type OrganizationOverview = {
   /** Current election (the doors knocked only count its visits), null when none is set. */
   election: string | null;
   by_status: Record<
-    "to_visit" | "planned" | "failure" | "commitment_to_vote" | "good_conversation" | "do_not_contact",
+    "to_visit" | "planned" | "failure" | "commitment_to_vote" | "good_conversation" | "do_not_contact" | "not_interested",
     number
   >;
 };

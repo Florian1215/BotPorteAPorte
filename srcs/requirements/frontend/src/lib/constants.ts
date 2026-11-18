@@ -1,4 +1,4 @@
-import { Ban, DoorClosed, HeartHandshake, MapPinOff, ThumbsUp, type LucideIcon } from "lucide-react";
+import { Ban, DoorClosed, HeartHandshake, MapPinOff, Meh, ThumbsUp, type LucideIcon } from "lucide-react";
 
 import type { AbsentDetail, ResultValue, Role, ScoreCriterionKey } from "../api/types";
 
@@ -51,6 +51,15 @@ export const RESULTS: ResultDef[] = [
     color: "#0d9488",
     solid: "bg-teal-600 text-white ring-teal-600",
     disc: "bg-teal-600",
+  },
+  {
+    value: "not_interested",
+    label: "Personne peu intéressée",
+    short: "Peu intéressée",
+    icon: Meh,
+    color: "#7c3aed",
+    solid: "bg-violet-600 text-white ring-violet-600",
+    disc: "bg-violet-500",
   },
   {
     value: "do_not_contact",

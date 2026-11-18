@@ -1,8 +1,8 @@
-"""Management screens: sign-up validation, members, organizations (name, logo).
+"""Management screens: sign-up validation, members, organizations (creation).
 
 Who can do what:
 - militant·e aguerri·e: approve / reject the sign-ups of their organization;
-- responsable d'organisation: every right on their organization (members, roles, name, logo);
+- responsable d'organisation: every right on their organization (members, roles);
 - administrateur·rice du site: every right on every organization, creates organizations.
 """
 from datetime import timedelta
@@ -17,12 +17,12 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import PermissionDenied, ValidationError
-from rest_framework.parsers import MultiPartParser
+from rest_framework.parsers import JSONParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from canvassing.models import Address, AddressImport
-from canvassing.services import address_import, scoring
+from canvassing.services import address_import
 
 from .emails import send_invitation
 from .images import InvalidImage, process_logo
@@ -203,8 +203,21 @@ class MemberDetailView(APIView):
 # --------------------------------------------------------------------------- organizations
 
 
+def processed_logo(upload) -> bytes:
+    """Validate and shrink an uploaded logo (WebP bytes)."""
+    if upload.size > LOGO_MAX_BYTES:
+        raise ValidationError({"logo": "Image trop lourde (20 Mo maximum)."})
+    try:
+        return process_logo(upload)
+    except InvalidImage as exc:
+        raise ValidationError({"logo": str(exc)}) from None
+
+
 class OrganizationAdminListView(APIView):
+    """Organizations are created once, all at once (name, city, LEC, optional logo), and never edited afterwards."""
+
     permission_classes = [IsSiteAdmin]
+    parser_classes = [JSONParser, MultiPartParser]
 
     def get(self, request):
         return Response(OrganizationAdminSerializer(with_counts(Organization.objects.all()), many=True).data)
@@ -212,54 +225,16 @@ class OrganizationAdminListView(APIView):
     def post(self, request):
         serializer = OrganizationAdminSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        organization = serializer.save()
+        upload = request.FILES.get("logo")
+        logo = processed_logo(upload) if upload is not None else None
+        extra = {"logo": logo, "logo_content_type": "image/webp", "logo_updated_at": timezone.now()} if logo else {}
+        organization = serializer.save(**extra)
         return Response(OrganizationAdminSerializer(organization).data, status=status.HTTP_201_CREATED)
 
 
 class OrganizationAdminDetailView(APIView):
     def get(self, request, code):
         return Response(OrganizationAdminSerializer(managed_organization(request, code)).data)
-
-    def patch(self, request, code):
-        organization = managed_organization(request, code)
-        if not request.user.is_site_admin and {"voter_list", "radius_km"} & set(request.data):
-            raise PermissionDenied("Seul·es les administrateur·rices du site choisissent la LEC d'une organisation.")
-        previous_list = organization.voter_list_id
-        serializer = OrganizationAdminSerializer(organization, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        organization = serializer.save()
-        if organization.voter_list_id != previous_list:
-            scoring.rescore_organization(organization)  # the zones count the French voters of the list
-        return Response(OrganizationAdminSerializer(managed_organization(request, code)).data)
-
-
-class OrganizationLogoUploadView(APIView):
-    parser_classes = [MultiPartParser]
-
-    def post(self, request, code):
-        organization = managed_organization(request, code)
-        upload = request.FILES.get("logo")
-        if upload is None:
-            raise ValidationError({"logo": "Choisis une image."})
-        if upload.size > LOGO_MAX_BYTES:
-            raise ValidationError({"logo": "Image trop lourde (20 Mo maximum)."})
-        try:
-            data = process_logo(upload)
-        except InvalidImage as exc:
-            raise ValidationError({"logo": str(exc)}) from None
-        organization.logo = data
-        organization.logo_content_type = "image/webp"
-        organization.logo_updated_at = timezone.now()
-        organization.save(update_fields=["logo", "logo_content_type", "logo_updated_at"])
-        return Response(OrganizationAdminSerializer(organization).data)
-
-    def delete(self, request, code):
-        organization = managed_organization(request, code)
-        organization.logo = None
-        organization.logo_content_type = ""
-        organization.logo_updated_at = None
-        organization.save(update_fields=["logo", "logo_content_type", "logo_updated_at"])
-        return Response(OrganizationAdminSerializer(organization).data)
 
 
 # --------------------------------------------------------------------------- voter lists (LEC, site admins)

@@ -201,13 +201,6 @@ export default function AddressImport({ voterList }: { voterList: number }) {
           </div>
         </div>
       )}
-
-      {!preview && !job && (
-        <p className="text-xs leading-relaxed text-zinc-500">
-          La liste électorale consulaire envoyée par le consulat (.xls). Sont gardés : nom, prénoms, adresse et année de naissance (pas l'e-mail ni le
-          lieu de naissance). Les nouvelles personnes sont ajoutées, celles qui n'y figurent plus sont désactivées.
-        </p>
-      )}
     </Card>
   );
 }

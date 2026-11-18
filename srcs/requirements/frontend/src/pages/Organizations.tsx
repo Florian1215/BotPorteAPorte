@@ -1,5 +1,5 @@
-import { Building2, ChevronRight, Plus } from "lucide-react";
-import { useEffect, useState, type FormEvent } from "react";
+import { Building2, ChevronRight, ImagePlus, Plus, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 
 import { api, errorMessage } from "../api/client";
@@ -88,8 +88,24 @@ function CreateOrganization({ onCancel, onCreated }: { onCancel: () => void; onC
     voter_list: null,
     radius_km: 30,
   });
+  const [logo, setLogo] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!logo) return setPreview(null);
+    const url = URL.createObjectURL(logo);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [logo]);
+
+  const pickLogo = (file: File) => {
+    if (file.size > 20 * 1024 * 1024) return setError("Image trop lourde (20 Mo maximum).");
+    setError(null);
+    setLogo(file);
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -98,7 +114,10 @@ function CreateOrganization({ onCancel, onCreated }: { onCancel: () => void; onC
     setLoading(true);
     setError(null);
     try {
-      onCreated(await api<OrganizationAdmin>("/manage/organizations/", { method: "POST", body: form }));
+      const body = new FormData();
+      for (const [key, value] of Object.entries(form)) if (value !== null) body.append(key, String(value));
+      if (logo) body.append("logo", logo);
+      onCreated(await api<OrganizationAdmin>("/manage/organizations/", { method: "POST", body }));
     } catch (err) {
       setError(errorMessage(err));
       setLoading(false);
@@ -124,6 +143,28 @@ function CreateOrganization({ onCancel, onCreated }: { onCancel: () => void; onC
       </Field>
       <CityPicker value={form} onChange={(city) => setForm({ ...form, ...city })} />
       <VoterListPicker value={form} onChange={(choice) => setForm({ ...form, ...choice })} />
+      <Field label="Logo (facultatif)">
+        <div className="flex items-center gap-3">
+          <div className="flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white ring-1 ring-zinc-950/[0.08]">
+            {preview ? <img src={preview} alt="" className="size-full object-cover" /> : <ImagePlus className="size-5 text-zinc-300" />}
+          </div>
+          <input
+            ref={fileInput}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) pickLogo(file);
+              e.target.value = "";
+            }}
+          />
+          <Button type="button" variant="secondary" size="sm" icon={ImagePlus} onClick={() => fileInput.current?.click()}>
+            {logo ? "Changer" : "Choisir une image"}
+          </Button>
+          {logo && <Button type="button" variant="ghost" size="sm" icon={Trash2} onClick={() => setLogo(null)} aria-label="Retirer le logo" />}
+        </div>
+      </Field>
       <div className="grid grid-cols-2 gap-2">
         <Button type="button" variant="secondary" onClick={onCancel}>
           Annuler

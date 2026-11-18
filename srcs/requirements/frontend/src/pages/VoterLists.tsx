@@ -170,7 +170,7 @@ export function VoterListDetail() {
   };
 
   return (
-    <Sheet title={list?.name ?? "LEC"} subtitle={list ? `${fr(list.n_active)} adresses actives` : undefined} locate={false}>
+    <Sheet title={list?.name ?? "LEC"} locate={false}>
       {error && <Alert>{error}</Alert>}
       {saved && <Alert kind="success">{saved}</Alert>}
       {!list && !error && <Loading />}

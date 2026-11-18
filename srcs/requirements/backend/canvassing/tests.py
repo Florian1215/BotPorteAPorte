@@ -678,6 +678,30 @@ class SharedVoterListTests(TestCase):
         self.leipzig.radius_km = 200
         self.assertEqual(organization_addresses(self.leipzig).count(), 2)
 
+    def test_organization_created_with_its_logo(self):
+        import io
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from PIL import Image
+        from rest_framework.test import APIClient
+
+        buffer = io.BytesIO()
+        Image.new("RGB", (40, 40), "red").save(buffer, "PNG")
+        client = APIClient()
+        client.force_authenticate(self.admin)
+        response = client.post(
+            "/api/manage/organizations/",
+            {
+                "name": "Dresde", "city": "Dresden", "city_lat": "51.05", "city_lon": "13.74", "country_code": "DE",
+                "voter_list": self.voter_list.id, "radius_km": 20,
+                "logo": SimpleUploadedFile("logo.png", buffer.getvalue(), content_type="image/png"),
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertTrue(response.json()["logo_url"])
+        self.assertEqual(Organization.objects.get(code="dresde").logo_content_type, "image/webp")
+
     def test_only_site_admins_manage_voter_lists(self):
         from rest_framework.test import APIClient
 
@@ -687,14 +711,15 @@ class SharedVoterListTests(TestCase):
         self.assertEqual(client.get(f"/api/manage/voter-lists/{self.voter_list.id}/addresses/import/").status_code, 403)
         other = VoterList.objects.create(name="LEC Munich")
         response = client.patch("/api/manage/organizations/leipzig/", {"voter_list": other.id}, format="json")
-        self.assertEqual(response.status_code, 403)
+        self.assertIn(response.status_code, (403, 405))
 
         client.force_authenticate(self.admin)
         lists = client.get("/api/manage/voter-lists/").json()
         berlin = next(v for v in lists if v["name"] == "LEC Berlin")
         self.assertEqual((berlin["n_active"], {o["code"] for o in berlin["organizations"]}), (2, {"berlin", "leipzig"}))
+        # Name, city and LEC are fixed at creation: nobody can change them afterwards.
         response = client.patch("/api/manage/organizations/leipzig/", {"voter_list": other.id}, format="json")
-        self.assertEqual((response.status_code, response.json()["voter_list_name"]), (200, "LEC Munich"))
+        self.assertEqual(response.status_code, 405)
         # A list with addresses cannot be deleted (their visits would go with them).
         self.assertEqual(client.delete(f"/api/manage/voter-lists/{self.voter_list.id}/").status_code, 400)
         self.assertEqual(client.delete(f"/api/manage/voter-lists/{other.id}/").status_code, 400 if other.addresses.exists() else 204)

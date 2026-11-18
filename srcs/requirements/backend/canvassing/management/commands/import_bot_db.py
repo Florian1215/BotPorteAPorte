@@ -298,7 +298,7 @@ class Command(BaseCommand):
             VisitResult.COMMITMENT_TO_VOTE: "promesses de vote",
             VisitResult.GOOD_CONVERSATION: "bonnes conversations",
             VisitResult.NOT_INTERESTED: "peu intéressé·es",
-            VisitResult.DO_NOT_CONTACT: "ne pas déranger",
+            VisitResult.DO_NOT_CONTACT: "ne plus déranger",
             VisitResult.ADDRESS_TO_RETRY: "absent·es",
             VisitResult.ADDRESS_FAILURE: "adresses introuvables",
         }

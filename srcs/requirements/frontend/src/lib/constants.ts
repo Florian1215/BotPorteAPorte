@@ -63,8 +63,8 @@ export const RESULTS: ResultDef[] = [
   },
   {
     value: "do_not_contact",
-    label: "Ne pas déranger",
-    short: "Ne pas déranger",
+    label: "Ne plus déranger",
+    short: "Ne plus déranger",
     icon: Ban,
     color: "#64748b",
     solid: "bg-zinc-600 text-white ring-zinc-600",

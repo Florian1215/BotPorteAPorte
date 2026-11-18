@@ -549,7 +549,7 @@ function TourSummary({ tour }: { tour: Tour }) {
       {(s.not_interested > 0 || s.do_not_contact > 0 || s.address_failure > 0 || s.not_visited > 0) && (
         <Card className="divide-y divide-zinc-950/5">
           {s.not_interested > 0 && <Row label="Personnes peu intéressées" value={s.not_interested} />}
-          {s.do_not_contact > 0 && <Row label="Ne pas déranger" value={s.do_not_contact} />}
+          {s.do_not_contact > 0 && <Row label="Ne plus déranger" value={s.do_not_contact} />}
           {s.address_failure > 0 && <Row label="Adresses introuvables" value={s.address_failure} />}
           {s.not_visited > 0 && <Row label="Adresses non visitées (libérées)" value={s.not_visited} />}
         </Card>

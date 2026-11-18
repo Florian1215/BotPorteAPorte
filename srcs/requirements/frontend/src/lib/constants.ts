@@ -161,7 +161,7 @@ export const formatSocial = (v: number) => (Math.abs(v) <= 1 ? pct(v) : v.toLoca
 export const CRITERION_FORMAT: Record<ScoreCriterionKey, (v: number) => string> = {
   party: pct,
   abstention: pct,
-  young: pct,
+  age: pct,
   density: (v) => `${Math.round(v).toLocaleString("fr")} Français·es/km²`,
   social: formatSocial,
 };
@@ -169,7 +169,7 @@ export const CRITERION_FORMAT: Record<ScoreCriterionKey, (v: number) => string> 
 export const CRITERION_HELP: Record<ScoreCriterionKey, string> = {
   party: "Part des voix du parti le plus proche de LFI dans le pays, parmi les suffrages exprimés.",
   abstention: "Inscrit·es qui n'ont pas voté : des électeur·rices à mobiliser.",
-  young: "Part des 18–29 ans parmi les Français·es de la liste électorale (d'après l'année de naissance).",
+  age: "Vote LFI attendu d'après l'âge des Français·es de la liste (18–24 ans : 41 %, 25–34 : 30 %, 35–49 : 36 %, 50–59 : 28 %, 60–69 : 24 %, 70 et plus : 19 %).",
   density: "Français·es de la liste électorale par km² : plus de portes à l'heure.",
   social: "Indicateur social de la zone (bas revenus, pauvreté, revenu médian…) : les zones les plus pauvres d'abord.",
 };

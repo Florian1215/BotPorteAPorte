@@ -544,6 +544,7 @@ function DistrictSheet({ id }: { id: number }) {
       <SectionTitle>Français·es de la liste</SectionTitle>
       <div className="grid grid-cols-2 gap-2">
         <Metric label="Densité" value={d.density != null ? `${d.density.toLocaleString("fr")} Français·es/km²` : "—"} />
+        <Metric label="Vote LFI attendu (âge)" value={formatPct(d.age_lfi_vote != null ? d.age_lfi_vote * 100 : null)} />
         <Metric label="18–29 ans" value={formatPct(d.share_18_29 != null ? d.share_18_29 * 100 : null)} />
         <Metric label="65 ans et plus" value={formatPct(d.share_65_plus != null ? d.share_65_plus * 100 : null)} />
       </div>

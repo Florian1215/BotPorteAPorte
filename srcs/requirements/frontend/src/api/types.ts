@@ -157,7 +157,7 @@ export type District = {
 /** `n_total`: French voters of the current election in the district, `n_done`: those done. */
 export type Area = District & { n_to_visit: number; done_pct: number; n_total: number; n_done: number };
 
-export type ScoreCriterionKey = "party" | "abstention" | "young" | "density" | "social";
+export type ScoreCriterionKey = "party" | "abstention" | "age" | "density" | "social";
 export type ScoreWeights = Record<ScoreCriterionKey, number>;
 
 export type DistrictImport = {
@@ -237,6 +237,8 @@ export type DistrictDetail = District & ProgressElections & {
   area_km2: number;
   density: number | null;
   share_18_29: number | null;
+  /** LFI vote expected from the age of the French voters of the list (0–1). */
+  age_lfi_vote: number | null;
   share_65_plus: number | null;
   /** The organization's social indicator (share 0–1, rate or income), null without data. */
   social_label: string;

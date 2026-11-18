@@ -35,6 +35,25 @@ def _density(d: District):
     return n_french / d.area_km2 if n_french is not None and d.area_km2 else None
 
 
+# LFI vote by age (share of each age group voting LFI): the "age" criterion is the mean of these rates over the
+# French voters of a district, i.e. the LFI vote to expect from its age structure alone.
+# (lowest age included, highest included or None, rate)
+LFI_VOTE_BY_AGE = [
+    (18, 24, 0.41),
+    (25, 34, 0.30),
+    (35, 49, 0.36),
+    (50, 59, 0.28),
+    (60, 69, 0.24),
+    (70, None, 0.19),
+]
+
+
+def _age_rate_sql() -> str:
+    """SQL CASE: LFI vote rate of the age group of `age` (under 18 this year: with the youngest)."""
+    cases = " ".join(f"WHEN age <= {high} THEN {rate}" for _, high, rate in LFI_VOTE_BY_AGE if high is not None)
+    return f"CASE {cases} ELSE {LFI_VOTE_BY_AGE[-1][2]} END"
+
+
 @dataclass(frozen=True)
 class FrenchStats:
     """The French voters of the organization's list living in a district."""
@@ -43,6 +62,8 @@ class FrenchStats:
     # Shares among those whose birth year is known (None: no birth year at all).
     share_18_29: float | None
     share_65_plus: float | None
+    # Mean LFI vote rate of their age groups (`LFI_VOTE_BY_AGE`).
+    age_lfi_vote: float | None = None
 
 
 def french_stats(organization_id: int, district_ids: list[int] | None = None) -> dict[int, FrenchStats]:
@@ -57,11 +78,13 @@ def french_stats(organization_id: int, district_ids: list[int] | None = None) ->
                    COUNT(a.id),
                    COUNT(a.birth_year),
                    COUNT(a.id) FILTER (WHERE %(year)s - a.birth_year BETWEEN 18 AND 29),
-                   COUNT(a.id) FILTER (WHERE %(year)s - a.birth_year >= 65)
+                   COUNT(a.id) FILTER (WHERE %(year)s - a.birth_year >= 65),
+                   AVG({_age_rate_sql()}) FILTER (WHERE a.birth_year IS NOT NULL)
             FROM {District._meta.db_table} d
             JOIN {Organization._meta.db_table} o ON o.id = d.organization_id
             LEFT JOIN {Address._meta.db_table} a
               ON a.voter_list_id = o.voter_list_id AND a.disabled_at IS NULL AND ST_Contains(d.geometry, a.location)
+            CROSS JOIN LATERAL (SELECT %(year)s - a.birth_year AS age) ages
             WHERE d.organization_id = %(organization)s {only}
             GROUP BY d.id
             """,
@@ -72,8 +95,11 @@ def french_stats(organization_id: int, district_ids: list[int] | None = None) ->
             },
         )
         return {
-            pk: FrenchStats(count, young / known if known else None, old / known if known else None)
-            for pk, count, known, young, old in cursor.fetchall()
+            pk: FrenchStats(
+                count, young / known if known else None, old / known if known else None,
+                float(rate) if rate is not None else None,
+            )
+            for pk, count, known, young, old, rate in cursor.fetchall()
         }
 
 
@@ -85,15 +111,15 @@ def criteria_for(organization=None) -> list[Criterion]:
     return [
         Criterion("party", f"Vote {party}", lambda d: _ratio(d.reference_votes, d.valid)),
         Criterion("abstention", "Abstention", lambda d: 1 - d.voters / d.eligible if d.voters is not None and d.eligible else None),
-        # Among the French voters of the list (set by `rescore_organization` as `french_18_29`), not the census.
-        Criterion("young", "18–29 ans", lambda d: getattr(d, "french_18_29", None)),
+        # Among the French voters of the list (set by `rescore_organization` as `age_lfi_vote`), not the census.
+        Criterion("age", "Âge (vote LFI attendu)", lambda d: getattr(d, "age_lfi_vote", None)),
         Criterion("density", "Densité", _density),
         # The poorer the better: a median income counts the other way round.
         Criterion("social", social, lambda d: d.social_value, higher_is_better=poorer_is_higher),
     ]
 
 
-DEFAULT_WEIGHTS = {"party": 50, "abstention": 15, "young": 15, "density": 10, "social": 10}
+DEFAULT_WEIGHTS = {"party": 50, "abstention": 15, "age": 15, "density": 10, "social": 10}
 
 
 def weights_of(organization) -> dict[str, int]:
@@ -180,7 +206,7 @@ def rescore_organization(organization) -> int:
     for d in districts:
         f = stats.get(d.id)
         d.n_french = f.count if f else 0
-        d.french_18_29 = f.share_18_29 if f else None
+        d.age_lfi_vote = f.age_lfi_vote if f else None
     compute_scores(districts, weights_of(organization), criteria_for(organization))
     District.objects.bulk_update(districts, ["reference_votes", "score", "score_parts"], batch_size=500)
     return len(districts)

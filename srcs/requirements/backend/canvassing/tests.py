@@ -30,11 +30,11 @@ class ScoringTests(SimpleTestCase):
     def test_score_is_weighted_mean_of_ranks_and_skips_missing_data(self):
         a = District(id=1, reference_votes=10, valid=100, voters=50, eligible=100, rent_m2=None)
         b = District(id=2, reference_votes=40, valid=100, voters=80, eligible=100, rent_m2=None)
-        scoring.compute_scores([a, b], {"party": 50, "abstention": 50, "young": 0, "density": 0, "social": 30})
+        scoring.compute_scores([a, b], {"party": 50, "abstention": 50, "age": 0, "density": 0, "social": 30})
         # b: best Linke vote (rank 1) but least abstention (rank 0); income is missing everywhere → ignored.
         self.assertEqual(a.score, 50)
         self.assertEqual(b.score, 50)
-        scoring.compute_scores([a, b], {"party": 100, "abstention": 0, "young": 0, "density": 0, "social": 0})
+        scoring.compute_scores([a, b], {"party": 100, "abstention": 0, "age": 0, "density": 0, "social": 0})
         self.assertEqual((a.score, b.score), (0, 100))
         self.assertIsNone(a.score_parts["social"]["rank"])
 
@@ -58,7 +58,7 @@ class ScoringTests(SimpleTestCase):
         self.assertIsNone(low_income_share({"kom": "gültig", "s1": -9999, "s3": 10}))
 
     def test_clean_weights(self):
-        self.assertEqual(scoring.clean_weights({"party": "150", "young": -3})["party"], 100)
+        self.assertEqual(scoring.clean_weights({"party": "150", "age": -3})["party"], 100)
         with self.assertRaises(ValueError):
             scoring.clean_weights({})
 
@@ -358,6 +358,14 @@ class DistrictInfoTests(TestCase):
         self.assertEqual(counts["45–54"], 1)
         self.assertEqual(counts["75+"], 1)
         self.assertEqual(ages["unknown"], 1)
+
+    def test_age_criterion_is_the_lfi_vote_expected_from_the_ages(self):
+        stats = scoring.french_stats(self.organization.id)[self.district.id]
+        # 20 and 17 → 41 %, two 30 → 30 %, 50 → 28 %, 80 → 19 %; the one without birth year is left out.
+        self.assertAlmostEqual(stats.age_lfi_vote, (0.41 * 2 + 0.30 * 2 + 0.28 + 0.19) / 6)
+        scoring.rescore_organization(self.organization)
+        self.district.refresh_from_db()
+        self.assertAlmostEqual(self.district.score_parts["age"]["value"], stats.age_lfi_vote)
 
     def test_low_income_without_census_uses_overlapping_area(self):
         self.assertEqual(ds.add_social(self.organization), 1)

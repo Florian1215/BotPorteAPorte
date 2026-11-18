@@ -327,6 +327,7 @@ def district_detail(d: District, progress: dict) -> dict:
         "density": round(density) if density is not None else None,
         "share_18_29": french.share_18_29 if french else None,
         "share_65_plus": french.share_65_plus if french else None,
+        "age_lfi_vote": french.age_lfi_vote if french else None,
         "social_label": d.organization.social_label,
         "social_value": d.social_value,
         "score_parts": [

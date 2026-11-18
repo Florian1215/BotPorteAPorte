@@ -86,6 +86,7 @@ class ImportReport:
     to_geocode: int = 0  # distinct addresses not geocoded yet (the slow part)
     not_geocoded: int = 0
     not_geocoded_examples: list[str] = field(default_factory=list)
+    geocoding_warnings: list[str] = field(default_factory=list)  # e.g. Google refused (billing, quota)
 
     def as_dict(self) -> dict:
         return dict(self.__dict__)
@@ -346,8 +347,10 @@ def geocode_plan(plan: Plan, country_code: str, progress=None) -> None:
     todo = plan.to_geocode()
     if not todo:
         return
-    results = geocoding.geocode_many({e.geocode_key: e.parsed for e in todo}, country_code, progress)
     report = plan.report
+    results = geocoding.geocode_many(
+        {e.geocode_key: e.parsed for e in todo}, country_code, progress, warnings=report.geocoding_warnings
+    )
     for entry in todo:
         row = results.get(entry.geocode_key)
         if row is not None and row.found:

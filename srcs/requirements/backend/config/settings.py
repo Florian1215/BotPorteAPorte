@@ -135,6 +135,11 @@ NOMINATIM_USER_AGENT = env("NOMINATIM_USER_AGENT", "canvassing-web")
 # Optional typo-tolerant search (self-hosted Photon server, e.g. photon:2322) used as a last resort for
 # hand-typed addresses. Blank = disabled (the public photon.komoot.io blocks bulk use).
 PHOTON_DOMAIN = env("PHOTON_DOMAIN")
+# Google Maps Platform – Geocoding API: last resort for the addresses OpenStreetMap could not locate (the ones
+# already located are never sent to Google). Blank = disabled. Requests per calendar month are capped
+# (each address is sent at most once, see `GeocodeCache.google_tried_at`).
+GOOGLE_MAPS_API_KEY = env("GOOGLE_MAPS_API_KEY")
+GOOGLE_GEOCODING_MONTHLY_LIMIT = int(env("GOOGLE_GEOCODING_MONTHLY_LIMIT", "9000"))
 CANVASSING_MAX_STOPS = int(env("CANVASSING_MAX_STOPS", "250"))
 CANVASSING_TOUR_TIMEOUT_HOURS = int(env("CANVASSING_TOUR_TIMEOUT_HOURS", "24"))
 CANVASSING_DRAFT_TIMEOUT_HOURS = 2

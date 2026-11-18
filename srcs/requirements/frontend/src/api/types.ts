@@ -299,6 +299,8 @@ export type ImportReport = {
   to_geocode: number;
   not_geocoded: number;
   not_geocoded_examples: string[];
+  /** Why some addresses could not be sent to Google (billing not enabled, monthly limit…). */
+  geocoding_warnings?: string[];
   dry_run?: boolean;
 };
 

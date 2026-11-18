@@ -341,6 +341,8 @@ class GeocodeCache(models.Model):
     city = models.CharField(max_length=128, blank=True, default="")
     lat = models.FloatField(null=True)
     lon = models.FloatField(null=True)
+    # When the address was sent to Google (only addresses OpenStreetMap could not locate): never sent twice.
+    google_tried_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 

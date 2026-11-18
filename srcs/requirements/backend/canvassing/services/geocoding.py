@@ -9,17 +9,25 @@ Addresses of the electoral lists are typed by hand and often have typos ("Haupst
    same house number, next to the given postcode, on a street (or place) with a similar name;
 4. typo correction: the closest street name already located in the same postcode (or town), on Nominatim;
 5. optionally, a self-hosted Photon server (typo-tolerant search, like the search box of a map site): its hit is
-   only accepted in the same postcode (or town).
+   only accepted in the same postcode (or town);
+6. optionally (list imports), Google Maps Platform – Geocoding API, for the addresses still not located: each one
+   is sent once at most, within a monthly budget (Google bills per request). Addresses OpenStreetMap located are
+   never sent to Google.
 """
 import difflib
+import logging
 import re
 import threading
+
+import requests
 
 from django.conf import settings
 from geopy.extra.rate_limiter import RateLimiter
 from geopy.geocoders import Nominatim, Photon
 
 from canvassing.addressutils import AddressNotGeolocated, StreetFormat, street_format_country_dict
+
+logger = logging.getLogger(__name__)
 
 
 def make_geocoder(domain: str | None = None, min_delay_seconds: float = 1.0):
@@ -356,6 +364,116 @@ def geocode_fuzzy(addr: AddressNotGeolocated, country_code: str | None, geocoder
         return None
 
 
+# --------------------------------------------------------------------------- Google (last resort, paid)
+
+GOOGLE_GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
+# Language of the names Google returns (without it, towns may come back in English: "Munich", "Vienna").
+GOOGLE_LANGUAGES = {"DE": "de", "AT": "de", "CH": "de", "FR": "fr", "LU": "fr", "BE": "fr", "CZ": "cs", "IT": "it",
+                    "ES": "es", "PT": "pt", "NL": "nl", "PL": "pl", "GB": "en", "IE": "en"}
+# Google results precise enough to knock on a door.
+GOOGLE_HOUSE_TYPES = {"street_address", "premise", "subpremise"}
+GOOGLE_PRECISE = {"ROOFTOP", "RANGE_INTERPOLATED"}
+
+
+class GoogleUnavailable(Exception):
+    """Google refused (no/invalid key, quota exceeded) or could not be reached: stop sending to it."""
+
+
+def _core_name(street: str) -> str:
+    """"Franz Emrichgasse" → "franzemrich": the street name without its generic part (gasse, weg, platz…)."""
+    return re.sub(r"(gasse|weg|platz|allee|ring|damm|ufer|steig|zeile|guertel|strasse)$", "", _stem(clean_street(street)))
+
+
+def _surely_same_street(found: str, typed: str) -> bool:
+    """Stricter than `same_street`: the shared "gasse" / "straße" does not count."""
+    a, b = _core_name(found), _core_name(typed)
+    return bool(a and b) and (a == b or difflib.SequenceMatcher(None, a, b).ratio() >= 0.85)
+
+
+def google_query(addr: AddressNotGeolocated) -> str | None:
+    """Text sent to Google, or None when there is no door to look for (no street or no number)."""
+    street, number, city = clean_street(addr.street_name), clean_number(addr.street_number), clean_city(addr.city)
+    if not street or not number:
+        return None
+    return f"{street} {number}, {addr.zip_str} {city}".strip(" ,")
+
+
+def google_geocode(addr: AddressNotGeolocated, country_code: str | None, session=None):
+    """Look the address up on Google. Returns a hit (read by `location_to_fields`) or None.
+
+    Kept only if it is the right house (same number, precise to the building) next to the given postcode (or in a
+    town with a similar name): Google normalizes the street name, never moves someone to another town.
+    """
+    query = google_query(addr)
+    if query is None:
+        return None
+    params = {"address": query, "key": settings.GOOGLE_MAPS_API_KEY}
+    cc = (country_code or "").upper()
+    if cc:
+        params["components"] = f"country:{cc}"
+        params["region"] = cc.lower()
+        if cc in GOOGLE_LANGUAGES:
+            params["language"] = GOOGLE_LANGUAGES[cc]
+    try:
+        response = (session or requests).get(GOOGLE_GEOCODE_URL, params=params, timeout=10)
+        data = response.json()
+    except Exception as exc:  # network error, not JSON
+        raise GoogleUnavailable(str(exc)) from exc
+    status = data.get("status")
+    if status in ("ZERO_RESULTS", "INVALID_REQUEST"):
+        return None
+    if status != "OK":  # OVER_QUERY_LIMIT, OVER_DAILY_LIMIT, REQUEST_DENIED, UNKNOWN_ERROR
+        raise GoogleUnavailable(f"{status}: {data.get('error_message', '')}".strip(": "))
+
+    number = clean_number(addr.street_number)
+    city = clean_city(addr.city)
+    for result in data.get("results", []):
+        if not GOOGLE_HOUSE_TYPES & set(result.get("types", [])):
+            continue
+        geometry = result.get("geometry", {})
+        if geometry.get("location_type") not in GOOGLE_PRECISE:
+            continue
+        parts: dict[str, str] = {}
+        for component in result.get("address_components", []):
+            for kind in component.get("types", []):
+                parts.setdefault(kind, component["short_name"] if kind == "country" else component["long_name"])
+        town = next((parts[k] for k in ("locality", "postal_town", "administrative_area_level_3", "sublocality") if k in parts), "")
+        if cc and parts.get("country", "").upper() != cc:
+            continue
+        if not (parts.get("route") and _same_number(parts.get("street_number"), number)):
+            continue
+        # Google rewrites the street freely ("Franz Emrichgasse 8, 1120" → "Emichgasse 8, 1220"): a postcode one
+        # digit off (typo) is only accepted on the same street; another street must be in the very same postcode.
+        postcode = parts.get("postal_code")
+        if addr.zip_str:
+            if not (postcode == addr.zip_str or (_close_zip(postcode, addr.zip_str) and _surely_same_street(parts["route"], addr.street_name))):
+                continue
+        elif not _similar(town, city):
+            continue
+        location = geometry["location"]
+        props = {"street": parts["route"], "housenumber": parts["street_number"], "postcode": parts.get("postal_code"),
+                 "city": town, "countrycode": parts.get("country", "")}
+        return _Hit(props, location["lat"], location["lng"])
+    return None
+
+
+def google_session():
+    return requests.Session()
+
+
+def google_budget() -> int:
+    """Google requests still allowed this calendar month."""
+    from django.utils import timezone
+
+    from canvassing.models import GeocodeCache
+
+    if not settings.GOOGLE_MAPS_API_KEY:
+        return 0
+    month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    used = GeocodeCache.objects.filter(google_tried_at__gte=month_start).count()
+    return max(0, settings.GOOGLE_GEOCODING_MONTHLY_LIMIT - used)
+
+
 def location_to_fields(addr: AddressNotGeolocated, location) -> dict | None:
     """Normalize a Nominatim result into address fields. Returns None if the result is too imprecise."""
     details = location.raw.get("address", {})
@@ -428,11 +546,12 @@ def cache_key(addr: AddressNotGeolocated, country_code: str | None) -> str:
     return "|".join(" ".join(p.lower().split()) for p in ((country_code or ""), addr.street_name, number, addr.zip_str, addr.city))[:512]
 
 
-def geocode_many(addresses: dict[str, AddressNotGeolocated], country_code: str | None, progress=None) -> dict:
+def geocode_many(addresses: dict[str, AddressNotGeolocated], country_code: str | None, progress=None, warnings=None) -> dict:
     """Geocode many parsed addresses (key → address), using and filling `GeocodeCache`.
 
     Returns key → GeocodeCache row (`found` False when the address could not be located precisely).
     `progress(done, total)` is called from time to time with the number of addresses looked up.
+    Problems worth telling the user (Google refused, monthly limit reached) are appended to `warnings`.
     """
     from concurrent.futures import ThreadPoolExecutor
 
@@ -512,20 +631,75 @@ def geocode_many(addresses: dict[str, AddressNotGeolocated], country_code: str |
                 progress(done - len(not_found), total)  # the not found ones go through pass 2
         flush(force=True)
 
+        still_missing: list[GeocodeCache] = []  # not located by OpenStreetMap: cached after the Google pass
         if not_found:
             known = KnownStreets.load()
             base = done - len(not_found)
             for i, (key, row) in enumerate(zip(not_found, pool.map(lambda k: _safe(corrected, k), not_found)), 1):
                 if row is not None:
                     results[key] = row
-                    batch.append(row)
+                    if row.found:
+                        batch.append(row)
+                    else:
+                        still_missing.append(row)
                 flush()
                 if progress and i % 20 == 0:
                     progress(base + i, total)
     flush(force=True)
+
+    # Pass 3: Google, for the addresses OpenStreetMap could not locate (this import's, and those of earlier
+    # imports never sent to Google). The located ones are never sent.
+    cached_missing = [row for row in results.values() if row.pk and not row.found and row.google_tried_at is None]
+    warning = google_pass(still_missing + cached_missing, addresses, country_code, to_row)
+    if warning and warnings is not None:
+        warnings.append(warning)
+    GeocodeCache.objects.bulk_create([row for row in still_missing], ignore_conflicts=True)
+    GeocodeCache.objects.bulk_update(
+        [row for row in cached_missing if row.google_tried_at], ["found", "street", "zip_code", "city", "lat", "lon", "google_tried_at"],
+        batch_size=500,
+    )
+    for row in still_missing + cached_missing:
+        results[row.query] = row
     if progress:
         progress(total, total)
     return results
+
+
+def google_pass(rows, addresses: dict[str, AddressNotGeolocated], country_code: str | None, to_row) -> str | None:
+    """Send not-located addresses to Google (within the monthly budget), filling the rows in place.
+    `google_tried_at` is only set on the rows actually sent (an outage leaves the others for the next import).
+    Returns a message for the user when Google could not be used for all of them."""
+    from django.utils import timezone
+
+    rows = [row for row in rows if google_query(addresses[row.query]) is not None]
+    budget = google_budget() if rows else 0
+    if not rows or budget <= 0:
+        if rows and settings.GOOGLE_MAPS_API_KEY:
+            logger.warning("Google geocoding: monthly limit reached, %d addresses left not located", len(rows))
+            return f"Limite mensuelle de Google atteinte : {len(rows)} adresses n'ont pas pu lui être envoyées."
+        return None
+    warning = None
+    if len(rows) > budget:
+        warning = f"Limite mensuelle de Google atteinte : {len(rows) - budget} adresses n'ont pas pu lui être envoyées."
+    session = google_session()
+    sent = located = 0
+    for row in rows[:budget]:
+        addr = addresses[row.query]
+        try:
+            hit = google_geocode(addr, country_code, session)
+        except GoogleUnavailable as exc:
+            logger.warning("Google geocoding unavailable (%s): %d addresses left not located", exc, len(rows) - sent)
+            warning = f"Google a refusé la recherche ({exc}). Ces adresses seront renvoyées à Google au prochain import."
+            break
+        sent += 1
+        found = to_row(row.query, addr, hit) if hit else None
+        if found is not None and found.found:
+            located += 1
+            for name in ("found", "street", "zip_code", "city", "lat", "lon"):
+                setattr(row, name, getattr(found, name))
+        row.google_tried_at = timezone.now()
+    logger.info("Google geocoding: %d addresses sent, %d located", sent, located)
+    return warning
 
 
 def _safe(fn, key):

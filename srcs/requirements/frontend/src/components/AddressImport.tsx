@@ -148,7 +148,7 @@ export default function AddressImport({ voterList }: { voterList: number }) {
           {(done.reactivated ?? 0) > 0 && <p className="mt-0.5">{plural(done.reactivated!, "personne réactivée", "personnes réactivées")}.</p>}
         </Alert>
       )}
-      {done && (done.not_geocoded ?? 0) > 0 && <NotGeocoded count={done.not_geocoded!} examples={done.not_geocoded_examples ?? []} />}
+      {done && (done.not_geocoded ?? 0) > 0 && <NotGeocoded count={done.not_geocoded!} examples={done.not_geocoded_examples ?? []} warnings={done.geocoding_warnings ?? []} />}
 
       {preview && file && (
         <div className="space-y-3 rounded-2xl bg-zinc-50 p-3 ring-1 ring-zinc-950/5">
@@ -230,7 +230,7 @@ function Progress({ job }: { job: AddressImportJob }) {
   );
 }
 
-function NotGeocoded({ count, examples }: { count: number; examples: string[] }) {
+function NotGeocoded({ count, examples, warnings }: { count: number; examples: string[]; warnings: string[] }) {
   return (
     <Alert kind="warning">
       <p className="flex items-center gap-1.5">
@@ -238,6 +238,11 @@ function NotGeocoded({ count, examples }: { count: number; examples: string[] })
         {plural(count, "adresse n'a pas pu être localisée", "adresses n'ont pas pu être localisées")} (pas de numéro de rue, adresse inconnue de la carte…) :
         ces personnes ne sont pas sur la carte.
       </p>
+      {warnings.map((w) => (
+        <p key={w} className="mt-1 text-xs font-semibold">
+          {w}
+        </p>
+      ))}
       {examples.length > 0 && (
         <details className="mt-1 text-xs">
           <summary className="cursor-pointer">Voir des exemples</summary>

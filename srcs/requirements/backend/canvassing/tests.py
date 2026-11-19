@@ -643,22 +643,16 @@ class FuzzyGeocodingTests(SimpleTestCase):
         self.assertEqual(geocoding.location_to_fields(addr, location)["address"], "Pfarrwöhrde 17")
 
 
-def google_answer(status="OK", street="Pfarrwöhrde", number="17", postcode="12524", location_type="ROOFTOP",
-                  types=("street_address",)):
-    """A Geocoding API response (shape of maps.googleapis.com/maps/api/geocode/json)."""
-    components = [
-        {"long_name": number, "short_name": number, "types": ["street_number"]},
-        {"long_name": street, "short_name": street, "types": ["route"]},
-        {"long_name": "Berlin", "short_name": "Berlin", "types": ["locality", "political"]},
-        {"long_name": postcode, "short_name": postcode, "types": ["postal_code"]},
-        {"long_name": "Deutschland", "short_name": "DE", "types": ["country", "political"]},
-    ]
-    result = {"types": list(types), "address_components": components,
-              "geometry": {"location": {"lat": 52.43, "lng": 13.55}, "location_type": location_type}}
-    return {"status": status, "results": [result] if status == "OK" else []}
+def arcgis_answer(street="Pfarrwöhrde", number="17", postcode="12524", addr_type="PointAddress", found=True):
+    """A findAddressCandidates response (shape of geocode.arcgis.com/.../GeocodeServer/findAddressCandidates)."""
+    attributes = {"Addr_type": addr_type, "AddNum": number, "StAddr": f"{street} {number}", "StName": street,
+                  "Postal": postcode, "City": "Berlin"}
+    candidate = {"address": f"{street} {number}, {postcode} Berlin", "score": 98,
+                 "location": {"x": 13.55, "y": 52.43}, "attributes": attributes}
+    return {"candidates": [candidate] if found else []}
 
 
-class FakeGoogle:
+class FakeArcGIS:
     def __init__(self, answer):
         self.answer, self.calls = answer, []
 
@@ -667,30 +661,29 @@ class FakeGoogle:
         return mock.Mock(json=lambda: self.answer)
 
 
-@override_settings(GOOGLE_MAPS_API_KEY="test-key", GOOGLE_GEOCODING_MONTHLY_LIMIT=100)
-class GoogleGeocodingTests(TestCase):
-    """Google is the last resort: only for addresses OpenStreetMap could not locate, each one sent once."""
+class ArcGISGeocodingTests(TestCase):
+    """ArcGIS is the last resort: only for addresses OpenStreetMap could not locate, each one sent once."""
 
     addr = AddressNotGeolocated("", "", "Pfarrwörde", "17", "12524", "BERLIN")
 
     def test_only_the_right_house_is_kept(self):
         from canvassing.services import geocoding
 
-        hit = geocoding.google_geocode(self.addr, "DE", FakeGoogle(google_answer()))
-        self.assertEqual(geocoding.location_to_fields(self.addr, hit)["address"], "Pfarrwöhrde 17")
-        hit = geocoding.google_geocode(self.addr, "DE", FakeGoogle(google_answer(postcode="12525")))  # postcode typo
+        hit = geocoding.arcgis_geocode(self.addr, "DE", FakeArcGIS(arcgis_answer()))
+        fields = geocoding.location_to_fields(self.addr, hit)
+        self.assertEqual((fields["address"], fields["lat"], fields["lon"]), ("Pfarrwöhrde 17", 52.43, 13.55))
+        hit = geocoding.arcgis_geocode(self.addr, "DE", FakeArcGIS(arcgis_answer(postcode="12525")))  # postcode typo
         self.assertEqual(geocoding.location_to_fields(self.addr, hit)["zip_code"], "12525")
         for answer in (
-            google_answer(number="19"),  # another house
-            google_answer(postcode="80331"),  # another town
-            google_answer(street="Emichgasse", postcode="12525"),  # another street in the next postcode
-            google_answer(location_type="APPROXIMATE"),  # not precise enough
-            google_answer(types=("route",)),  # the street only
-            google_answer(status="ZERO_RESULTS"),
+            arcgis_answer(number="19"),  # another house
+            arcgis_answer(postcode="80331"),  # another town
+            arcgis_answer(street="Emichgasse", postcode="12525"),  # another street in the next postcode
+            arcgis_answer(addr_type="StreetName"),  # the street only
+            arcgis_answer(found=False),
         ):
-            self.assertIsNone(geocoding.google_geocode(self.addr, "DE", FakeGoogle(answer)))
-        with self.assertRaises(geocoding.GoogleUnavailable):
-            geocoding.google_geocode(self.addr, "DE", FakeGoogle({"status": "REQUEST_DENIED", "error_message": "bad key"}))
+            self.assertIsNone(geocoding.arcgis_geocode(self.addr, "DE", FakeArcGIS(answer)))
+        with self.assertRaises(geocoding.ArcGISUnavailable):
+            geocoding.arcgis_geocode(self.addr, "DE", FakeArcGIS({"error": {"code": 498, "message": "Invalid token."}}))
 
     @mock.patch("canvassing.services.geocoding.geocode_corrected", return_value=None)
     @mock.patch("canvassing.services.geocoding.geocode_direct", return_value=None)
@@ -702,41 +695,35 @@ class GoogleGeocodingTests(TestCase):
         GeocodeCache.objects.create(query=located_key, found=True, street="Torstraße", zip_code="10115", city="Berlin", lat=52.5, lon=13.4)
         key = geocoding.cache_key(self.addr, "DE")
 
-        google = FakeGoogle(google_answer())
-        with mock.patch("canvassing.services.geocoding.google_session", return_value=google):
+        arcgis = FakeArcGIS(arcgis_answer())
+        with mock.patch("canvassing.services.geocoding.arcgis_session", return_value=arcgis):
             rows = geocoding.geocode_many({key: self.addr, located_key: located}, "DE")
-        self.assertEqual(len(google.calls), 1)
-        self.assertEqual(google.calls[0]["address"], "Pfarrwörde 17, 12524 Berlin")
+        self.assertEqual(len(arcgis.calls), 1)
+        self.assertEqual(arcgis.calls[0]["SingleLine"], "Pfarrwörde 17, 12524 Berlin")
         self.assertEqual((rows[key].found, rows[key].street), (True, "Pfarrwöhrde"))
 
-        # Not found by Google either: cached as tried, never sent again.
+        # Not found by ArcGIS either: cached as tried, never sent again.
         other = AddressNotGeolocated("", "", "Nirgendwo", "3", "12524", "Berlin")
         other_key = geocoding.cache_key(other, "DE")
         for expected_calls in (1, 0):
-            google = FakeGoogle(google_answer(status="ZERO_RESULTS"))
-            with mock.patch("canvassing.services.geocoding.google_session", return_value=google):
+            arcgis = FakeArcGIS(arcgis_answer(found=False))
+            with mock.patch("canvassing.services.geocoding.arcgis_session", return_value=arcgis):
                 rows = geocoding.geocode_many({other_key: other}, "DE")
-            self.assertEqual((len(google.calls), rows[other_key].found), (expected_calls, False))
-        self.assertIsNotNone(GeocodeCache.objects.get(query=other_key).google_tried_at)
+            self.assertEqual((len(arcgis.calls), rows[other_key].found), (expected_calls, False))
+        self.assertIsNotNone(GeocodeCache.objects.get(query=other_key).arcgis_tried_at)
 
     @mock.patch("canvassing.services.geocoding.geocode_corrected", return_value=None)
     @mock.patch("canvassing.services.geocoding.geocode_direct", return_value=None)
-    def test_outage_and_monthly_limit(self, *_):
+    def test_outage(self, *_):
         from canvassing.services import geocoding
 
         key = geocoding.cache_key(self.addr, "DE")
-        google = FakeGoogle({"status": "REQUEST_DENIED", "error_message": "You must enable Billing"})
+        arcgis = FakeArcGIS({"error": {"code": 429, "message": "Too many requests"}})
         warnings = []
-        with mock.patch("canvassing.services.geocoding.google_session", return_value=google):
+        with mock.patch("canvassing.services.geocoding.arcgis_session", return_value=arcgis):
             geocoding.geocode_many({key: self.addr}, "DE", warnings=warnings)
-        self.assertIn("enable Billing", warnings[0])  # shown in the import report
-        self.assertIsNone(GeocodeCache.objects.get(query=key).google_tried_at)  # retried at the next import
-
-        google = FakeGoogle(google_answer())
-        with override_settings(GOOGLE_GEOCODING_MONTHLY_LIMIT=0), \
-                mock.patch("canvassing.services.geocoding.google_session", return_value=google):
-            geocoding.geocode_many({key: self.addr}, "DE")
-        self.assertEqual(google.calls, [])
+        self.assertIn("Too many requests", warnings[0])  # shown in the import report
+        self.assertIsNone(GeocodeCache.objects.get(query=key).arcgis_tried_at)  # retried at the next import
 
 
 class SuspendedMemberTests(TestCase):

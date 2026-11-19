@@ -10,9 +10,8 @@ Addresses of the electoral lists are typed by hand and often have typos ("Haupst
 4. typo correction: the closest street name already located in the same postcode (or town), on Nominatim;
 5. optionally, a self-hosted Photon server (typo-tolerant search, like the search box of a map site): its hit is
    only accepted in the same postcode (or town);
-6. optionally (list imports), Google Maps Platform – Geocoding API, for the addresses still not located: each one
-   is sent once at most, within a monthly budget (Google bills per request). Addresses OpenStreetMap located are
-   never sent to Google.
+6. list imports: ArcGIS (Esri World Geocoding Service), for the addresses still not located: each one is sent once
+   at most. Addresses OpenStreetMap located are never sent to ArcGIS.
 """
 import difflib
 import logging
@@ -364,19 +363,19 @@ def geocode_fuzzy(addr: AddressNotGeolocated, country_code: str | None, geocoder
         return None
 
 
-# --------------------------------------------------------------------------- Google (last resort, paid)
+# --------------------------------------------------------------------------- ArcGIS (last resort)
 
-GOOGLE_GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
-# Language of the names Google returns (without it, towns may come back in English: "Munich", "Vienna").
-GOOGLE_LANGUAGES = {"DE": "de", "AT": "de", "CH": "de", "FR": "fr", "LU": "fr", "BE": "fr", "CZ": "cs", "IT": "it",
+ARCGIS_GEOCODE_URL = "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates"
+# Language of the names ArcGIS returns (without it, towns may come back in English: "Munich", "Vienna").
+ARCGIS_LANGUAGES = {"DE": "de", "AT": "de", "CH": "de", "FR": "fr", "LU": "fr", "BE": "fr", "CZ": "cs", "IT": "it",
                     "ES": "es", "PT": "pt", "NL": "nl", "PL": "pl", "GB": "en", "IE": "en"}
-# Google results precise enough to knock on a door.
-GOOGLE_HOUSE_TYPES = {"street_address", "premise", "subpremise"}
-GOOGLE_PRECISE = {"ROOFTOP", "RANGE_INTERPOLATED"}
+# ArcGIS matches precise enough to knock on a door (the building, or interpolated along the street).
+ARCGIS_HOUSE_TYPES = {"PointAddress", "Subaddress", "StreetAddress"}
+ARCGIS_FIELDS = "Addr_type,AddNum,StAddr,StName,Postal,City,Neighborhood,District"
 
 
-class GoogleUnavailable(Exception):
-    """Google refused (no/invalid key, quota exceeded) or could not be reached: stop sending to it."""
+class ArcGISUnavailable(Exception):
+    """ArcGIS refused (invalid token, rate limit) or could not be reached: stop sending to it."""
 
 
 def _core_name(street: str) -> str:
@@ -390,88 +389,79 @@ def _surely_same_street(found: str, typed: str) -> bool:
     return bool(a and b) and (a == b or difflib.SequenceMatcher(None, a, b).ratio() >= 0.85)
 
 
-def google_query(addr: AddressNotGeolocated) -> str | None:
-    """Text sent to Google, or None when there is no door to look for (no street or no number)."""
+def arcgis_query(addr: AddressNotGeolocated) -> str | None:
+    """Text sent to ArcGIS, or None when there is no door to look for (no street or no number)."""
     street, number, city = clean_street(addr.street_name), clean_number(addr.street_number), clean_city(addr.city)
     if not street or not number:
         return None
     return f"{street} {number}, {addr.zip_str} {city}".strip(" ,")
 
 
-def google_geocode(addr: AddressNotGeolocated, country_code: str | None, session=None):
-    """Look the address up on Google. Returns a hit (read by `location_to_fields`) or None.
+def _arcgis_street(attributes: dict) -> str:
+    """"Pfarrwöhrde 17" / "17 rue de la Paix" → the street without its number."""
+    street, number = (attributes.get("StAddr") or "").strip(), (attributes.get("AddNum") or "").strip()
+    if number and street.endswith(number):
+        street = street[: -len(number)]
+    elif number and street.startswith(number):
+        street = street[len(number):]
+    return street.strip(" ,") or (attributes.get("StName") or "").strip()
+
+
+def arcgis_geocode(addr: AddressNotGeolocated, country_code: str | None, session=None):
+    """Look the address up on ArcGIS. Returns a hit (read by `location_to_fields`) or None.
 
     Kept only if it is the right house (same number, precise to the building) next to the given postcode (or in a
-    town with a similar name): Google normalizes the street name, never moves someone to another town.
+    town with a similar name): ArcGIS normalizes the street name, never moves someone to another town.
     """
-    query = google_query(addr)
+    query = arcgis_query(addr)
     if query is None:
         return None
-    params = {"address": query, "key": settings.GOOGLE_MAPS_API_KEY}
+    params = {"SingleLine": query, "f": "json", "outFields": ARCGIS_FIELDS, "maxLocations": 5}
+    if settings.ARCGIS_API_KEY:
+        params["token"] = settings.ARCGIS_API_KEY
+        params["forStorage"] = "true"  # the results are kept in GeocodeCache
     cc = (country_code or "").upper()
     if cc:
-        params["components"] = f"country:{cc}"
-        params["region"] = cc.lower()
-        if cc in GOOGLE_LANGUAGES:
-            params["language"] = GOOGLE_LANGUAGES[cc]
+        params["sourceCountry"] = cc
+        if cc in ARCGIS_LANGUAGES:
+            params["langCode"] = ARCGIS_LANGUAGES[cc]
     try:
-        response = (session or requests).get(GOOGLE_GEOCODE_URL, params=params, timeout=10)
+        response = (session or requests).get(ARCGIS_GEOCODE_URL, params=params, timeout=10)
         data = response.json()
     except Exception as exc:  # network error, not JSON
-        raise GoogleUnavailable(str(exc)) from exc
-    status = data.get("status")
-    if status in ("ZERO_RESULTS", "INVALID_REQUEST"):
-        return None
-    if status != "OK":  # OVER_QUERY_LIMIT, OVER_DAILY_LIMIT, REQUEST_DENIED, UNKNOWN_ERROR
-        raise GoogleUnavailable(f"{status}: {data.get('error_message', '')}".strip(": "))
+        raise ArcGISUnavailable(str(exc)) from exc
+    if "error" in data:  # invalid token, rate limit, service error
+        error = data["error"] or {}
+        raise ArcGISUnavailable(f"{error.get('code', '')}: {error.get('message', '')}".strip(": "))
 
     number = clean_number(addr.street_number)
     city = clean_city(addr.city)
-    for result in data.get("results", []):
-        if not GOOGLE_HOUSE_TYPES & set(result.get("types", [])):
+    for candidate in data.get("candidates", []):
+        attributes = candidate.get("attributes", {})
+        if attributes.get("Addr_type") not in ARCGIS_HOUSE_TYPES:
             continue
-        geometry = result.get("geometry", {})
-        if geometry.get("location_type") not in GOOGLE_PRECISE:
+        street = _arcgis_street(attributes)
+        if not (street and _same_number(attributes.get("AddNum"), number)):
             continue
-        parts: dict[str, str] = {}
-        for component in result.get("address_components", []):
-            for kind in component.get("types", []):
-                parts.setdefault(kind, component["short_name"] if kind == "country" else component["long_name"])
-        town = next((parts[k] for k in ("locality", "postal_town", "administrative_area_level_3", "sublocality") if k in parts), "")
-        if cc and parts.get("country", "").upper() != cc:
-            continue
-        if not (parts.get("route") and _same_number(parts.get("street_number"), number)):
-            continue
-        # Google rewrites the street freely ("Franz Emrichgasse 8, 1120" → "Emichgasse 8, 1220"): a postcode one
-        # digit off (typo) is only accepted on the same street; another street must be in the very same postcode.
-        postcode = parts.get("postal_code")
+        town = attributes.get("City") or attributes.get("District") or attributes.get("Neighborhood") or ""
+        # ArcGIS may rewrite the street ("Franz Emrichgasse 8, 1120" → "Emichgasse 8, 1220"): a postcode one digit
+        # off (typo) is only accepted on the same street; another street must be in the very same postcode.
+        postcode = attributes.get("Postal") or None
         if addr.zip_str:
-            if not (postcode == addr.zip_str or (_close_zip(postcode, addr.zip_str) and _surely_same_street(parts["route"], addr.street_name))):
+            if not (postcode == addr.zip_str or (_close_zip(postcode, addr.zip_str) and _surely_same_street(street, addr.street_name))):
                 continue
         elif not _similar(town, city):
             continue
-        location = geometry["location"]
-        props = {"street": parts["route"], "housenumber": parts["street_number"], "postcode": parts.get("postal_code"),
-                 "city": town, "countrycode": parts.get("country", "")}
-        return _Hit(props, location["lat"], location["lng"])
+        location = candidate.get("location") or {}
+        if location.get("x") is None or location.get("y") is None:
+            continue
+        props = {"street": street, "housenumber": attributes["AddNum"], "postcode": postcode, "city": town, "countrycode": cc}
+        return _Hit(props, location["y"], location["x"])
     return None
 
 
-def google_session():
+def arcgis_session():
     return requests.Session()
-
-
-def google_budget() -> int:
-    """Google requests still allowed this calendar month."""
-    from django.utils import timezone
-
-    from canvassing.models import GeocodeCache
-
-    if not settings.GOOGLE_MAPS_API_KEY:
-        return 0
-    month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    used = GeocodeCache.objects.filter(google_tried_at__gte=month_start).count()
-    return max(0, settings.GOOGLE_GEOCODING_MONTHLY_LIMIT - used)
 
 
 def location_to_fields(addr: AddressNotGeolocated, location) -> dict | None:
@@ -551,7 +541,7 @@ def geocode_many(addresses: dict[str, AddressNotGeolocated], country_code: str |
 
     Returns key → GeocodeCache row (`found` False when the address could not be located precisely).
     `progress(done, total)` is called from time to time with the number of addresses looked up.
-    Problems worth telling the user (Google refused, monthly limit reached) are appended to `warnings`.
+    Problems worth telling the user (ArcGIS unreachable or refusing) are appended to `warnings`.
     """
     from concurrent.futures import ThreadPoolExecutor
 
@@ -631,7 +621,7 @@ def geocode_many(addresses: dict[str, AddressNotGeolocated], country_code: str |
                 progress(done - len(not_found), total)  # the not found ones go through pass 2
         flush(force=True)
 
-        still_missing: list[GeocodeCache] = []  # not located by OpenStreetMap: cached after the Google pass
+        still_missing: list[GeocodeCache] = []  # not located by OpenStreetMap: cached after the ArcGIS pass
         if not_found:
             known = KnownStreets.load()
             base = done - len(not_found)
@@ -647,15 +637,15 @@ def geocode_many(addresses: dict[str, AddressNotGeolocated], country_code: str |
                     progress(base + i, total)
     flush(force=True)
 
-    # Pass 3: Google, for the addresses OpenStreetMap could not locate (this import's, and those of earlier
-    # imports never sent to Google). The located ones are never sent.
-    cached_missing = [row for row in results.values() if row.pk and not row.found and row.google_tried_at is None]
-    warning = google_pass(still_missing + cached_missing, addresses, country_code, to_row)
+    # Pass 3: ArcGIS, for the addresses OpenStreetMap could not locate (this import's, and those of earlier
+    # imports never sent to ArcGIS). The located ones are never sent.
+    cached_missing = [row for row in results.values() if row.pk and not row.found and row.arcgis_tried_at is None]
+    warning = arcgis_pass(still_missing + cached_missing, addresses, country_code, to_row)
     if warning and warnings is not None:
         warnings.append(warning)
     GeocodeCache.objects.bulk_create([row for row in still_missing], ignore_conflicts=True)
     GeocodeCache.objects.bulk_update(
-        [row for row in cached_missing if row.google_tried_at], ["found", "street", "zip_code", "city", "lat", "lon", "google_tried_at"],
+        [row for row in cached_missing if row.arcgis_tried_at], ["found", "street", "zip_code", "city", "lat", "lon", "arcgis_tried_at"],
         batch_size=500,
     )
     for row in still_missing + cached_missing:
@@ -665,31 +655,25 @@ def geocode_many(addresses: dict[str, AddressNotGeolocated], country_code: str |
     return results
 
 
-def google_pass(rows, addresses: dict[str, AddressNotGeolocated], country_code: str | None, to_row) -> str | None:
-    """Send not-located addresses to Google (within the monthly budget), filling the rows in place.
-    `google_tried_at` is only set on the rows actually sent (an outage leaves the others for the next import).
-    Returns a message for the user when Google could not be used for all of them."""
+def arcgis_pass(rows, addresses: dict[str, AddressNotGeolocated], country_code: str | None, to_row) -> str | None:
+    """Send not-located addresses to ArcGIS, filling the rows in place.
+    `arcgis_tried_at` is only set on the rows actually sent (an outage leaves the others for the next import).
+    Returns a message for the user when ArcGIS could not be used for all of them."""
     from django.utils import timezone
 
-    rows = [row for row in rows if google_query(addresses[row.query]) is not None]
-    budget = google_budget() if rows else 0
-    if not rows or budget <= 0:
-        if rows and settings.GOOGLE_MAPS_API_KEY:
-            logger.warning("Google geocoding: monthly limit reached, %d addresses left not located", len(rows))
-            return f"Limite mensuelle de Google atteinte : {len(rows)} adresses n'ont pas pu lui être envoyées."
+    rows = [row for row in rows if arcgis_query(addresses[row.query]) is not None]
+    if not rows:
         return None
     warning = None
-    if len(rows) > budget:
-        warning = f"Limite mensuelle de Google atteinte : {len(rows) - budget} adresses n'ont pas pu lui être envoyées."
-    session = google_session()
+    session = arcgis_session()
     sent = located = 0
-    for row in rows[:budget]:
+    for row in rows:
         addr = addresses[row.query]
         try:
-            hit = google_geocode(addr, country_code, session)
-        except GoogleUnavailable as exc:
-            logger.warning("Google geocoding unavailable (%s): %d addresses left not located", exc, len(rows) - sent)
-            warning = f"Google a refusé la recherche ({exc}). Ces adresses seront renvoyées à Google au prochain import."
+            hit = arcgis_geocode(addr, country_code, session)
+        except ArcGISUnavailable as exc:
+            logger.warning("ArcGIS geocoding unavailable (%s): %d addresses left not located", exc, len(rows) - sent)
+            warning = f"ArcGIS a refusé la recherche ({exc}). Ces adresses lui seront renvoyées au prochain import."
             break
         sent += 1
         found = to_row(row.query, addr, hit) if hit else None
@@ -697,8 +681,8 @@ def google_pass(rows, addresses: dict[str, AddressNotGeolocated], country_code: 
             located += 1
             for name in ("found", "street", "zip_code", "city", "lat", "lon"):
                 setattr(row, name, getattr(found, name))
-        row.google_tried_at = timezone.now()
-    logger.info("Google geocoding: %d addresses sent, %d located", sent, located)
+        row.arcgis_tried_at = timezone.now()
+    logger.info("ArcGIS geocoding: %d addresses sent, %d located", sent, located)
     return warning
 
 

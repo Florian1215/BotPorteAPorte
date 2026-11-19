@@ -86,7 +86,7 @@ class ImportReport:
     to_geocode: int = 0  # distinct addresses not geocoded yet (the slow part)
     not_geocoded: int = 0
     not_geocoded_examples: list[str] = field(default_factory=list)
-    geocoding_warnings: list[str] = field(default_factory=list)  # e.g. Google refused (billing, quota)
+    geocoding_warnings: list[str] = field(default_factory=list)  # e.g. ArcGIS refused or unreachable
 
     def as_dict(self) -> dict:
         return dict(self.__dict__)

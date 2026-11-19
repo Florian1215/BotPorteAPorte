@@ -103,7 +103,6 @@ function NavigationAppChoice() {
     <div className="space-y-2">
       {error && <Alert>{error}</Alert>}
       <Segmented options={NAVIGATION_APPS} value={value} onChange={pick} />
-      <p className="text-xs text-zinc-500">Ouverte quand tu touches l'adresse pendant une tournée, pour t'y guider à pied.</p>
     </div>
   );
 }

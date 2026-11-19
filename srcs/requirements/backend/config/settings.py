@@ -135,11 +135,10 @@ NOMINATIM_USER_AGENT = env("NOMINATIM_USER_AGENT", "canvassing-web")
 # Optional typo-tolerant search (self-hosted Photon server, e.g. photon:2322) used as a last resort for
 # hand-typed addresses. Blank = disabled (the public photon.komoot.io blocks bulk use).
 PHOTON_DOMAIN = env("PHOTON_DOMAIN")
-# Google Maps Platform – Geocoding API: last resort for the addresses OpenStreetMap could not locate (the ones
-# already located are never sent to Google). Blank = disabled. Requests per calendar month are capped
-# (each address is sent at most once, see `GeocodeCache.google_tried_at`).
-GOOGLE_MAPS_API_KEY = env("GOOGLE_MAPS_API_KEY")
-GOOGLE_GEOCODING_MONTHLY_LIMIT = int(env("GOOGLE_GEOCODING_MONTHLY_LIMIT", "9000"))
+# ArcGIS (Esri World Geocoding Service): last resort for the addresses OpenStreetMap could not locate (the ones
+# already located are never sent; each address is sent at most once, see `GeocodeCache.arcgis_tried_at`).
+# Works without a key; an ArcGIS Location Platform key allows storing the results (Esri's terms).
+ARCGIS_API_KEY = env("ARCGIS_API_KEY")
 # AI import of the zones (Claude Managed Agents, see canvassing/services/ai_import.py). Blank key = disabled.
 # The agent is set up once with `make ai-agent`; each import is capped at AI_IMPORT_BUDGET_USD (list price).
 ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY")

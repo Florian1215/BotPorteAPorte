@@ -1,6 +1,6 @@
 import type { FeatureCollection } from "geojson";
 import L from "leaflet";
-import { Bot, ChevronRight, ExternalLink, LandPlot, RefreshCw, SlidersHorizontal, Sparkles } from "lucide-react";
+import { ChevronRight, LandPlot, RefreshCw, SlidersHorizontal, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Marker, useMap, useMapEvents } from "react-leaflet";
 import { useNavigate } from "react-router-dom";
@@ -17,7 +17,7 @@ import type {
 } from "../api/types";
 import { FitBounds, FlyTo, MapLayers } from "../components/map";
 import { BackContext } from "../context/BackContext";
-import { Alert, Button, Card, EmptyState, Field, Loading, SectionTitle, Segmented, Sheet, Spinner, inputClass } from "../components/ui";
+import { Alert, Button, Card, EmptyState, Loading, SectionTitle, Segmented, Sheet, Spinner } from "../components/ui";
 import { CRITERION_FORMAT, CRITERION_HELP, DONE_STOPS, SCORE_CLASSES, doneColor, formatSocial, scoreColor } from "../lib/constants";
 
 type MapDistrict = DistrictMap["districts"][number];
@@ -734,7 +734,6 @@ function ImportSheet({
   const job = data.import;
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [hint, setHint] = useState("");
 
   const run = async (key: string, body: Record<string, unknown>) => {
     setBusy(key);
@@ -748,18 +747,6 @@ function ImportSheet({
       setBusy(null);
     }
   };
-
-  if (job?.status === "running" && job.source === "ai")
-    return (
-      <Sheet title="L'IA cherche les données" subtitle="Carte des zones, résultats électoraux et indicateur social." locate={false}>
-        <div className="flex items-center gap-3 rounded-2xl bg-zinc-50 p-4 text-sm text-zinc-600 ring-1 ring-zinc-950/5">
-          <Spinner className="size-5 shrink-0 text-brand-600" />
-          Ça prend en général 5 à 20 minutes. Tu peux quitter cette page, l'import continue.
-        </div>
-        {job.hint && <p className="text-sm text-zinc-500">Ta précision : « {job.hint} »</p>}
-        <AiSteps steps={job.progress_log ?? []} running />
-      </Sheet>
-    );
 
   if (job?.status === "running")
     return (
@@ -808,13 +795,6 @@ function ImportSheet({
       }
     >
       {job?.status === "failed" && <Alert>L'import a échoué : {job.message}</Alert>}
-      {job?.status === "failed" && job.source === "ai" && (job.progress_log?.length ?? 0) > 0 && (
-        <details className="text-sm text-zinc-600">
-          <summary className="cursor-pointer">Étapes de l'IA</summary>
-          <AiSteps steps={job.progress_log ?? []} />
-        </details>
-      )}
-      {job?.status === "done" && job.source === "ai" && <AiReport job={job} />}
       {error && <Alert>{error}</Alert>}
       {data.districts.length > 0 && (
         <Alert kind="warning">
@@ -835,90 +815,6 @@ function ImportSheet({
       </p>
       {others.map(packButton)}
 
-      {!data.ai_unavailable && (
-        <Card className="space-y-3 p-3.5">
-          <div className="flex items-center gap-3">
-            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700">
-              <Bot className="size-5" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="font-semibold tracking-tight">Importer avec l'IA</p>
-              <p className="text-xs text-zinc-500">
-                Pour une autre ville : l'IA cherche la carte des bureaux de vote (ou des quartiers), les derniers résultats, un indicateur
-                social, et le parti le plus proche de LFI dans le pays.
-              </p>
-            </div>
-          </div>
-          <Field label="Précision (facultatif)">
-            <textarea
-              className={`${inputClass} min-h-16 py-2`}
-              value={hint}
-              maxLength={1000}
-              onChange={(e) => setHint(e.target.value)}
-              placeholder="ex. législatives 2024 plutôt que les municipales, ou un lien vers le portail open data"
-            />
-          </Field>
-          <Button className="w-full" icon={Sparkles} loading={busy === "ai"} disabled={busy !== null} onClick={() => run("ai", { ai: true, hint })}>
-            Lancer l'import par l'IA
-          </Button>
-        </Card>
-      )}
     </Sheet>
-  );
-}
-
-/** Steps the AI agent reported, oldest first. */
-function AiSteps({ steps, running = false }: { steps: { at: string; message: string }[]; running?: boolean }) {
-  if (steps.length === 0) return running ? <p className="text-sm text-zinc-500">L'IA démarre…</p> : null;
-  return (
-    <ol className="space-y-2">
-      {steps.map((step, i) => {
-        const current = running && i === steps.length - 1;
-        return (
-          <li key={`${step.at}-${i}`} className="flex gap-2.5 text-sm">
-            <span className={`mt-1.5 size-2 shrink-0 rounded-full ${current ? "animate-pulse bg-brand-600" : "bg-zinc-300"}`} />
-            <span className={current ? "font-medium text-zinc-900" : "text-zinc-600"}>{step.message}</span>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
-/** What the last AI import found: election, zones, reference party (and why), social indicator, sources. */
-function AiReport({ job }: { job: DistrictImport }) {
-  const r = job.report;
-  return (
-    <Card className="space-y-2 p-3.5 text-sm">
-      <p className="font-semibold tracking-tight">Dernier import par l'IA</p>
-      <p className="text-zinc-600">
-        {r.n_districts?.toLocaleString("fr")} {r.level || "zones"}
-        {r.election ? ` · ${r.election}` : ""}
-      </p>
-      {r.reference_party && (
-        <p className="text-zinc-600">
-          <span className="font-semibold text-zinc-900">Parti de référence : {r.reference_party}.</span> {r.reference_reason}
-        </p>
-      )}
-      <p className="text-zinc-600">
-        {r.social_label
-          ? `Indicateur social : ${r.social_label}${r.social_source ? ` (${r.social_source})` : ""}, pour ${r.n_with_social ?? 0} zones.`
-          : "Pas d'indicateur social trouvé : le score s'en passe."}
-      </p>
-      {r.notes && <p className="text-zinc-500">{r.notes}</p>}
-      {(r.sources?.length ?? 0) > 0 && (
-        <ul className="space-y-1">
-          {r.sources!.map((url) => (
-            <li key={url} className="flex min-w-0 items-center gap-1.5">
-              <ExternalLink className="size-3.5 shrink-0 text-zinc-400" />
-              <a href={url} target="_blank" rel="noreferrer noopener" className="truncate text-brand-700 underline">
-                {url}
-              </a>
-            </li>
-          ))}
-        </ul>
-      )}
-      {r.cost_usd != null && <p className="text-xs text-zinc-400">Coût de l'import : {r.cost_usd.toLocaleString("fr")} $</p>}
-    </Card>
   );
 }

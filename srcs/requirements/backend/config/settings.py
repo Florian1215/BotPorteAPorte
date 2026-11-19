@@ -139,10 +139,6 @@ PHOTON_DOMAIN = env("PHOTON_DOMAIN")
 # already located are never sent; each address is sent at most once, see `GeocodeCache.arcgis_tried_at`).
 # Works without a key; an ArcGIS Location Platform key allows storing the results (Esri's terms).
 ARCGIS_API_KEY = env("ARCGIS_API_KEY")
-# AI import of the zones (Claude Managed Agents, see canvassing/services/ai_import.py). Blank key = disabled.
-# The agent is set up once with `make ai-agent`; each import is capped at AI_IMPORT_BUDGET_USD (list price).
-ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY")
-AI_IMPORT_BUDGET_USD = float(env("AI_IMPORT_BUDGET_USD", "2"))
 CANVASSING_MAX_STOPS = int(env("CANVASSING_MAX_STOPS", "250"))
 CANVASSING_TOUR_TIMEOUT_HOURS = int(env("CANVASSING_TOUR_TIMEOUT_HOURS", "24"))
 CANVASSING_DRAFT_TIMEOUT_HOURS = 2

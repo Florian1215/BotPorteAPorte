@@ -176,21 +176,11 @@ export type DistrictImport = {
     examples_without_results?: string[];
     n_results_without_district?: number;
     examples_results_without_district?: string[];
-    /** AI import: what the agent found. */
     n_with_social?: number;
-    election?: string;
+    /** City pack: level of the zones and official sources. */
     level?: string;
     sources?: string[];
-    notes?: string;
-    reference_party?: string;
-    reference_reason?: string;
-    social_label?: string | null;
-    social_source?: string;
-    cost_usd?: number;
   };
-  /** AI import: what the responsable asked, and the agent's steps so far. */
-  hint?: string;
-  progress_log?: { at: string; message: string }[];
   created_at: string;
   finished_at: string | null;
 };
@@ -211,8 +201,6 @@ export type DistrictMap = ProgressElections & {
   import: DistrictImport | null;
   /** One-click imports of the cities with official open data, the organization's city first. */
   packs: CityPack[];
-  /** Why the AI import is not available on this server, null when it is. */
-  ai_unavailable: string | null;
 } & ReferenceParty;
 
 /** The organization's party standing in for LFI, and its social indicator. */

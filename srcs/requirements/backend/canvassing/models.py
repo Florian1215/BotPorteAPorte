@@ -198,14 +198,10 @@ class DistrictImport(models.Model):
 
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="district_imports")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
-    source = models.CharField(max_length=32)  # a city pack key (`services/packs.py`) or "ai"
+    source = models.CharField(max_length=32)  # a city pack key (`services/packs.py`)
     status = models.CharField(max_length=16, choices=ImportStatus.choices, default=ImportStatus.PENDING)
     message = models.TextField(blank=True, default="")
     report = models.JSONField(default=dict, blank=True)
-    # AI import: what the responsable asked for (election, source…), the agent session, and its steps.
-    hint = models.TextField(blank=True, default="")
-    ai_session_id = models.CharField(max_length=64, blank=True, default="")
-    progress_log = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     finished_at = models.DateTimeField(null=True, blank=True)
 
@@ -379,16 +375,3 @@ class AddressImport(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
-
-
-class AiAgentConfig(models.Model):
-    """The Claude Managed Agents agent + environment of the AI district import (`manage.py setup_ai_agent`).
-
-    Created once, then updated in place; every import starts a session on them.
-    """
-
-    key = models.CharField(max_length=32, unique=True, default="districts")
-    agent_id = models.CharField(max_length=64)
-    agent_version = models.IntegerField(default=1)
-    environment_id = models.CharField(max_length=64)
-    updated_at = models.DateTimeField(auto_now=True)

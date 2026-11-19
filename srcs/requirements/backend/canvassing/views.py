@@ -26,7 +26,7 @@ from .serializers import (
     with_outline,
     tour_to_dict,
 )
-from .services import ai_import, packs
+from .services import packs
 from .services import districts as district_service
 from .services import elections as election_service
 from .services import scoring
@@ -261,7 +261,6 @@ class ManageDistrictListView(DistrictManagerView):
                 **reference_party_to_dict(organization),
                 "import": import_to_dict(last_import(organization)),
                 "packs": packs.catalog(organization),
-                "ai_unavailable": ai_import.unavailable_reason(),
                 **progress_election(election),
             }
         )
@@ -340,13 +339,11 @@ def district_detail(d: District, progress: dict) -> dict:
 
 
 STALE_IMPORT = timedelta(minutes=30)
-STALE_AI_IMPORT = timedelta(minutes=50)  # the agent may work up to 40 minutes
 
 
 def last_import(organization) -> DistrictImport | None:
     job = DistrictImport.objects.filter(organization=organization).first()
-    stale = STALE_AI_IMPORT if job and job.source == "ai" else STALE_IMPORT
-    if job and job.status == DistrictImport.ImportStatus.RUNNING and timezone.now() - job.created_at > stale:
+    if job and job.status == DistrictImport.ImportStatus.RUNNING and timezone.now() - job.created_at > STALE_IMPORT:
         job.status = DistrictImport.ImportStatus.FAILED
         job.message = "L'import a été interrompu (redémarrage du serveur ?). Relance-le."
         DistrictImport.objects.filter(pk=job.pk).update(status=job.status, message=job.message)
@@ -362,29 +359,18 @@ def import_to_dict(job: DistrictImport | None) -> dict | None:
         "status": job.status,
         "message": job.message,
         "report": job.report,
-        "hint": job.hint,
-        "progress_log": job.progress_log or [],
         "created_at": job.created_at,
         "finished_at": job.finished_at,
     }
 
 
 class DistrictImportView(DistrictManagerView):
-    """GET: the last import (polled while it runs). POST {pack}: one-click import of a city (`services/packs.py`).
-    POST {ai: true, hint}: the AI agent finds the data of the organization's city (`services/ai_import.py`)."""
+    """GET: the last import (polled while it runs). POST {pack}: one-click import of a city (`services/packs.py`)."""
 
     def get(self, request):
         return Response(import_to_dict(last_import(self.organization)))
 
     def post(self, request):
-        if request.data.get("ai"):
-            if reason := ai_import.unavailable_reason():
-                return error(reason)
-            if self.organization.city_lat is None:
-                return error("L'organisation n'a pas de ville : impossible de chercher ses données.")
-            job = self.new_job("ai", hint=str(request.data.get("hint") or "").strip()[:1000])
-            ai_import.start(job)
-            return Response(import_to_dict(job), status=status.HTTP_202_ACCEPTED)
         pack = request.data.get("pack") or request.data.get("preset")
         if pack not in packs.PACKS:
             return error("Pack inconnu.")
@@ -392,11 +378,11 @@ class DistrictImportView(DistrictManagerView):
         district_service.start_import(job)
         return Response(import_to_dict(job), status=status.HTTP_202_ACCEPTED)
 
-    def new_job(self, source: str, **fields) -> DistrictImport:
+    def new_job(self, source: str) -> DistrictImport:
         running = last_import(self.organization)
         if running and running.status == DistrictImport.ImportStatus.RUNNING:
             raise tour_service.TourError("Un import est déjà en cours.", status.HTTP_409_CONFLICT)
-        return DistrictImport.objects.create(organization=self.organization, user=self.request.user, source=source, **fields)
+        return DistrictImport.objects.create(organization=self.organization, user=self.request.user, source=source)
 
 
 class ScoreWeightsView(DistrictManagerView):

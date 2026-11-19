@@ -1,10 +1,7 @@
 """Import of the electoral map (polling districts + election results) of an organization.
 
-Two ways in:
-- a city pack (`packs.py`, one click): the official files of the city are downloaded by the server;
-- the AI import (`ai_import.py`): an agent finds and normalizes the files of any other city.
-
-Either way the districts of the organization are replaced, then enriched with the census grid
+A city pack (`packs.py`, one click): the official files of the city are downloaded by the server.
+The districts of the organization are replaced, then enriched with the census grid
 (`CensusCell`, loaded once for the whole site by `manage.py load_zensus`) and scored.
 """
 import io
@@ -439,94 +436,6 @@ def age_pyramid(district: District) -> dict:
     # Under 18 this year (born late in the year, or a typo in the list): with the youngest.
     groups[0]["count"] += sum(c for birth, c in counts.items() if year - birth < AGE_GROUPS[0][1])
     return {"groups": groups, "unknown": unknown}
-
-
-# --------------------------------------------------------------------------- normalized files (AI import)
-
-NORMALIZED_COUNTS = ("eligible", "voters", "valid")
-
-
-def rows_from_normalized(geometry_data: bytes, results_data: bytes, social_data: bytes | None = None) -> tuple[list[DistrictRow], dict]:
-    """The files the AI agent writes (see `ai_import.OUTPUT_CONTRACT`): `districts.geojson` (properties `id`,
-    `name`), `results.csv` (`id`, `eligible`, `voters`, `valid`, then one column of votes per party) and
-    optionally `social.csv` (`id`, `value`)."""
-    features = read_geojson(geometry_data)
-    if "id" not in features[0]:
-        raise DistrictImportError("districts.geojson : chaque zone doit avoir une propriété « id ».")
-    df, _ = read_table(results_data, "results.csv")
-    df.columns = [str(c).strip() for c in df.columns]
-    if "id" not in df.columns or "valid" not in df.columns:
-        raise DistrictImportError("results.csv : colonnes « id » et « valid » obligatoires.")
-    party_columns = [c for c in df.columns if c not in ("id", "name", *NORMALIZED_COUNTS)]
-    if not party_columns:
-        raise DistrictImportError("results.csv : aucune colonne de parti (une colonne de voix par parti).")
-
-    results: dict[str, dict] = defaultdict(lambda: defaultdict(float))
-    for record in df.to_dict(orient="records"):
-        key = normalize_id(record.get("id"))
-        if not key or key == "NAN":
-            continue
-        for col in (*NORMALIZED_COUNTS, *party_columns):
-            if col in df.columns and (v := to_number(record.get(col))) is not None:
-                results[key][col] += v
-
-    social: dict[str, float] = {}
-    if social_data:
-        sdf, _ = read_table(social_data, "social.csv")
-        sdf.columns = [str(c).strip() for c in sdf.columns]
-        if "id" not in sdf.columns or "value" not in sdf.columns:
-            raise DistrictImportError("social.csv : colonnes « id » et « value » obligatoires.")
-        for record in sdf.to_dict(orient="records"):
-            if (v := to_number(record.get("value"))) is not None:
-                social[normalize_id(record.get("id"))] = v
-
-    rows, unmatched = [], []
-    for key, feature in merge_by(features, lambda f: normalize_id(f.get("id"))).items():
-        result = results.get(key)
-        if result is None:
-            unmatched.append(str(feature.get("id")))
-            result = {}
-        name = feature.get("name")
-        rows.append(
-            DistrictRow(
-                code=str(feature.get("id"))[:32],
-                name=str(name) if name not in (None, "") else f"Zone {feature.get('id')}",
-                geometry=feature["_geometry"],
-                eligible=result.get("eligible"),
-                voters=result.get("voters"),
-                valid=result.get("valid"),
-                parties={c: result[c] for c in party_columns if c in result},
-                social_value=social.get(key),
-            )
-        )
-    report = {
-        "n_without_results": len(unmatched),
-        "examples_without_results": unmatched[:10],
-        "n_results_without_district": len(set(results) - {normalize_id(f.get("id")) for f in features}),
-        "party_columns": party_columns,
-    }
-    return rows, report
-
-
-def social_areas_from_geojson(organization, data: bytes, source: str) -> int:
-    """`social.geojson` of the AI import (polygons with a numeric `value`) → the organization's `SocialArea`s."""
-    from ..models import SocialArea
-
-    features = read_geojson(data)
-    areas = []
-    for i, feature in enumerate(features):
-        value = to_number(feature.get("value"))
-        if value is None:
-            continue
-        areas.append(SocialArea(
-            organization=organization, source=source[:32], code=str(feature.get("id") or i)[:32],
-            name=str(feature.get("name") or "")[:255], geometry=feature["_geometry"], low_income=value,
-        ))
-    if not areas:
-        raise DistrictImportError("social.geojson : aucune zone avec une « value » numérique.")
-    SocialArea.objects.filter(organization=organization).delete()
-    SocialArea.objects.bulk_create(areas, batch_size=500, ignore_conflicts=True)
-    return len(areas)
 
 
 # --------------------------------------------------------------------------- Berlin (see `packs.py`)

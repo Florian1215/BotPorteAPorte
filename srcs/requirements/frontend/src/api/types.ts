@@ -55,7 +55,11 @@ export type User = {
   organization: Organization | null;
   /** Telegram account linked from "Mon compte" (visits made with the old bot are then this user's). */
   telegram_id: number | null;
+  /** App opened when tapping an address during a tour. */
+  navigation_app: NavigationApp;
 };
+
+export type NavigationApp = "google" | "apple";
 
 export type Member = {
   id: number;

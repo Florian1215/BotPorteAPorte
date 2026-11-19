@@ -7,7 +7,8 @@ import { api, errorMessage } from "../api/client";
 import type { AbsentDetail, ResultValue, Stop, Tour } from "../api/types";
 import { FitBounds, FlyTo, MapLayers, PinMarker, stopIcon } from "../components/map";
 import { Alert, Button, Card, OverlaySpinner, ResultButtons, Sheet, StatTile } from "../components/ui";
-import { ABSENT_DETAIL_BY_VALUE, RESULT_BY_VALUE, formatDistance, formatDuration, navigationUrl } from "../lib/constants";
+import { useAuth } from "../context/AuthContext";
+import { ABSENT_DETAIL_BY_VALUE, NAVIGATION_APPS, RESULT_BY_VALUE, formatDistance, formatDuration, navigationUrl } from "../lib/constants";
 
 export default function TourPage() {
   const { id } = useParams();
@@ -163,6 +164,8 @@ function TourLayers({
 
 function TourControls({ tour, setTour }: { tour: Tour; setTour: (t: Tour) => void }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const navigationAppLabel = NAVIGATION_APPS.find((a) => a.value === user?.navigation_app)?.label ?? "Google Maps";
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmStop, setConfirmStop] = useState(false);
@@ -391,22 +394,23 @@ function TourControls({ tour, setTour }: { tour: Tour; setTour: (t: Tour) => voi
         }
         subtitle={
           <span key={stepKey} className="block animate-[step-in_.35s_cubic-bezier(.2,.8,.2,1)]">
-            {/* 2. street and number, 3. the rest of the address in small */}
-            <span className="mt-0.5 block text-lg short:text-base leading-snug font-semibold text-zinc-800">{current.address.address}</span>
-            <span className="block text-xs text-zinc-400">
-              {current.address.zip_code} {current.address.city}
-            </span>
+            {/* 2. street and number, 3. the rest of the address in small; tapping it opens the directions */}
+            <a
+              href={navigationUrl(current.address.lat, current.address.lon, user?.navigation_app)}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={`Itinéraire vers ${current.address.address} avec ${navigationAppLabel}`}
+              className="-mx-1 mt-0.5 block rounded-lg px-1 active:bg-sky-50"
+            >
+              <span className="flex items-center gap-1.5 text-lg short:text-base leading-snug font-semibold text-sky-700">
+                <span className="min-w-0">{current.address.address}</span>
+                <Navigation className="size-4 shrink-0" strokeWidth={2.25} />
+              </span>
+              <span className="block text-xs text-zinc-400">
+                {current.address.zip_code} {current.address.city}
+              </span>
+            </a>
           </span>
-        }
-        action={
-          <a
-            href={navigationUrl(current.address.lat, current.address.lon)}
-            target="_blank"
-            rel="noreferrer"
-            className="flex min-h-10 items-center gap-1.5 rounded-xl bg-sky-600 px-3.5 text-sm font-semibold text-white active:bg-sky-700"
-          >
-            <Navigation className="size-4" strokeWidth={2.25} /> Y aller
-          </a>
         }
         footer={<StopTourButton confirm={confirmStop} setConfirm={setConfirmStop} busy={busy === "finish"} onStop={finish} back={nextLink || backLink} empty={visitedCount === 0} />}
       >

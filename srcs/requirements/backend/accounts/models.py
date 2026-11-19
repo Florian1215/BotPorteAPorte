@@ -91,6 +91,11 @@ class Role(models.TextChoices):
     ADMIN = "admin", "Administrateur·rice du site"
 
 
+class NavigationApp(models.TextChoices):
+    GOOGLE = "google", "Google Maps"
+    APPLE = "apple", "Apple Plans"
+
+
 ROLE_RANK = {Role.MILITANT: 0, Role.EXPERIENCED: 1, Role.MANAGER: 2, Role.ADMIN: 3}
 
 
@@ -144,6 +149,10 @@ class User(AbstractUser):
     suspended_at = models.DateTimeField("suspendu·e le", null=True, blank=True)
     # Telegram account linked from the settings: the visits made with the old Telegram bot are theirs.
     telegram_id = models.BigIntegerField("identifiant Telegram", null=True, blank=True, unique=True)
+    # App opened when tapping an address during a tour.
+    navigation_app = models.CharField(
+        "application de navigation", max_length=16, choices=NavigationApp.choices, default=NavigationApp.GOOGLE
+    )
 
     USERNAME_FIELD = "email"
     EMAIL_FIELD = "email"

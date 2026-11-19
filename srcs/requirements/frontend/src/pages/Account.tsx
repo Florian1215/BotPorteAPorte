@@ -3,10 +3,10 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { api, errorMessage } from "../api/client";
-import type { LoginRequestResponse, User } from "../api/types";
-import { Alert, Button, Card, Field, inputClass, SectionTitle, Sheet } from "../components/ui";
+import type { LoginRequestResponse, NavigationApp, User } from "../api/types";
+import { Alert, Button, Card, Field, inputClass, SectionTitle, Segmented, Sheet } from "../components/ui";
 import { useAuth } from "../context/AuthContext";
-import { ROLE_LABEL } from "../lib/constants";
+import { NAVIGATION_APPS, ROLE_LABEL } from "../lib/constants";
 
 /** The user's own information: name, and email (changed only once the new address is confirmed). */
 export default function Account() {
@@ -66,6 +66,9 @@ export default function Account() {
         </Button>
       </form>
 
+      <SectionTitle>Navigation</SectionTitle>
+      <NavigationAppChoice />
+
       <SectionTitle>Adresse email</SectionTitle>
       <EmailChange current={user.email} />
 
@@ -75,6 +78,33 @@ export default function Account() {
         <DeleteAccount />
       </div>
     </Sheet>
+  );
+}
+
+/** The app opened when tapping an address during a tour; saved as soon as it is picked. */
+function NavigationAppChoice() {
+  const { user, updateProfile } = useAuth();
+  const [value, setValue] = useState<NavigationApp>(user?.navigation_app ?? "google");
+  const [error, setError] = useState<string | null>(null);
+
+  const pick = async (app: NavigationApp) => {
+    const previous = value;
+    setValue(app);
+    setError(null);
+    try {
+      await updateProfile({ navigation_app: app });
+    } catch (err) {
+      setValue(previous);
+      setError(errorMessage(err));
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      {error && <Alert>{error}</Alert>}
+      <Segmented options={NAVIGATION_APPS} value={value} onChange={pick} />
+      <p className="text-xs text-zinc-500">Ouverte quand tu touches l'adresse pendant une tournée, pour t'y guider à pied.</p>
+    </div>
   );
 }
 

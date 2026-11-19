@@ -1,6 +1,6 @@
 import { Ban, DoorClosed, HeartHandshake, MapPinOff, Meh, ThumbsUp, type LucideIcon } from "lucide-react";
 
-import type { AbsentDetail, ResultValue, Role, ScoreCriterionKey } from "../api/types";
+import type { AbsentDetail, NavigationApp, ResultValue, Role, ScoreCriterionKey } from "../api/types";
 
 export const ROLES: { value: Role; label: string; description: string }[] = [
   { value: "militant", label: "Militant·e", description: "Fait du porte-à-porte dans son organisation" },
@@ -118,7 +118,14 @@ export function formatDuration(seconds: number | null): string {
   return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")}`;
 }
 
-export function navigationUrl(lat: number, lon: number): string {
+export const NAVIGATION_APPS: { value: NavigationApp; label: string }[] = [
+  { value: "google", label: "Google Maps" },
+  { value: "apple", label: "Apple Plans" },
+];
+
+/** Walking directions to a door, in the militant's navigation app. */
+export function navigationUrl(lat: number, lon: number, app: NavigationApp = "google"): string {
+  if (app === "apple") return `https://maps.apple.com/?daddr=${lat},${lon}&dirflg=w`;
   return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=walking`;
 }
 

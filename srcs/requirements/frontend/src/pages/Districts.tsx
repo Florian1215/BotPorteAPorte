@@ -8,7 +8,6 @@ import { useNavigate } from "react-router-dom";
 import { api, errorMessage } from "../api/client";
 import type {
   DistrictDetail,
-  DistrictProgress,
   DistrictImport,
   DistrictMap,
   CityPack,
@@ -18,7 +17,7 @@ import type {
 import { FitBounds, FlyTo, MapLayers } from "../components/map";
 import { BackContext } from "../context/BackContext";
 import { Alert, Button, Card, EmptyState, Loading, SectionTitle, Segmented, Sheet, Spinner } from "../components/ui";
-import { CRITERION_FORMAT, CRITERION_HELP, DONE_STOPS, SCORE_CLASSES, doneColor, formatSocial, scoreColor } from "../lib/constants";
+import { CRITERION_FORMAT, CRITERION_HELP, DONE_STOPS, SCORE_CLASSES, doneColor, scoreColor } from "../lib/constants";
 
 type MapDistrict = DistrictMap["districts"][number];
 /** What the colour of the districts tells: their score, or the share of doors done. */
@@ -413,15 +412,6 @@ function formatPct(v: number | null | undefined, digits = 1) {
   return v == null ? "—" : `${v.toLocaleString("fr", { maximumFractionDigits: digits })} %`;
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl bg-zinc-50 px-3 py-2 ring-1 ring-zinc-950/5">
-      <p className="text-[15px] font-semibold tracking-tight tabular-nums">{value}</p>
-      <p className="text-xs text-zinc-500">{label}</p>
-    </div>
-  );
-}
-
 function DistrictSheet({ id }: { id: number }) {
   const navigate = useNavigate();
   const [detail, setDetail] = useState<DistrictDetail | null>(null);
@@ -445,13 +435,10 @@ function DistrictSheet({ id }: { id: number }) {
   const d = detail;
   const p = d.progress;
   const totalWeight = d.score_parts.reduce((sum, part) => sum + (part.rank != null ? part.weight : 0), 0);
-  const maxPartyPct = Math.max(1, ...d.parties.map((x) => x.pct ?? 0));
-  const isReference = (name: string) => d.reference_party_columns.includes(name);
 
   return (
     <Sheet
       title={d.name}
-      subtitle={d.election || undefined}
       locate={false}
       footer={
         <Button
@@ -471,21 +458,12 @@ function DistrictSheet({ id }: { id: number }) {
           <p className="text-sm text-zinc-500 tabular-nums">
             {p.total > 0
               ? `${p.total.toLocaleString("fr")} Français·e${p.total > 1 ? "s" : ""} · ${formatPct(p.done_pct, 0)} fait`
-              : "Aucune adresse de la liste dans ce bureau"}
+              : "Aucun Français de la liste ici"}
           </p>
         </div>
       </div>
 
-      {p.total > 0 && (
-        <>
-          <SectionTitle>
-            Français·es de la zone
-            {d.progress_election && <span className="font-normal"> · {d.progress_election}</span>}
-          </SectionTitle>
-          <ProgressCard progress={p} />
-          <AgePyramid ages={d.ages} />
-        </>
-      )}
+      {p.total > 0 && <AgePyramid ages={d.ages} />}
 
       <SectionTitle>Détail du score</SectionTitle>
       <Card className="divide-y divide-zinc-950/[0.06]">
@@ -496,7 +474,7 @@ function DistrictSheet({ id }: { id: number }) {
               <div className="flex items-baseline justify-between gap-2">
                 <p className="text-sm font-semibold">{part.label}</p>
                 <p className="text-sm tabular-nums text-zinc-700">
-                  {part.value != null ? CRITERION_FORMAT[part.key](part.value) : "Pas de donnée"}
+                  {part.value != null ? CRITERION_FORMAT[part.key](part.value) : "—"}
                 </p>
               </div>
               <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-zinc-100">
@@ -506,9 +484,9 @@ function DistrictSheet({ id }: { id: number }) {
               </div>
               <p className="mt-1 text-[11px] text-zinc-500 tabular-nums">
                 {part.rank == null
-                  ? "Ne compte pas : donnée manquante"
-                  : `Mieux que ${Math.round(part.rank * 100)} % des bureaux · ${
-                      counts ? `pèse ${Math.round((100 * part.weight) / totalWeight)} % du score` : "ne compte pas (poids 0)"
+                  ? "Pas de donnée"
+                  : `Mieux que ${Math.round(part.rank * 100)} % des zones${
+                      counts ? ` · ${Math.round((100 * part.weight) / totalWeight)} % du score` : ""
                     }`}
               </p>
             </div>
@@ -516,81 +494,7 @@ function DistrictSheet({ id }: { id: number }) {
         })}
       </Card>
 
-      <SectionTitle>Résultats</SectionTitle>
-      <div className="grid grid-cols-2 gap-2">
-        <Metric label={d.reference_party || "Parti de référence"} value={formatPct(d.reference_pct)} />
-        <Metric label="Participation" value={formatPct(d.turnout_pct)} />
-      </div>
-      {d.parties.length > 0 && (
-        <Card className="space-y-1.5 p-3.5">
-          {d.parties.map((party) => (
-            <div key={party.name} className="flex items-center gap-2 text-sm">
-              <span className={`w-24 shrink-0 truncate ${isReference(party.name) ? "font-semibold" : "text-zinc-600"}`}>{party.name}</span>
-              <div className="h-2 flex-1 overflow-hidden rounded-full bg-zinc-100">
-                <div
-                  className={`h-full rounded-full ${isReference(party.name) ? "bg-brand-600" : "bg-zinc-400"}`}
-                  style={{ width: `${((party.pct ?? 0) / maxPartyPct) * 100}%` }}
-                />
-              </div>
-              <span className="w-14 shrink-0 text-right tabular-nums text-zinc-700">{formatPct(party.pct)}</span>
-            </div>
-          ))}
-        </Card>
-      )}
-
-      <SectionTitle>Français·es de la liste</SectionTitle>
-      <div className="grid grid-cols-2 gap-2">
-        <Metric label="Densité de Français" value={d.density != null ? `${d.density.toLocaleString("fr")} Français·es/km²` : "—"} />
-        <Metric label="Vote LFI attendu (âge)" value={formatPct(d.age_lfi_vote != null ? d.age_lfi_vote * 100 : null)} />
-        <Metric label="18–29 ans" value={formatPct(d.share_18_29 != null ? d.share_18_29 * 100 : null)} />
-        <Metric label="65 ans et plus" value={formatPct(d.share_65_plus != null ? d.share_65_plus * 100 : null)} />
-      </div>
-
-      <SectionTitle>Quartier</SectionTitle>
-      <div className="grid grid-cols-2 gap-2">
-        <Metric label={d.social_label || "Indicateur social"} value={d.social_value != null ? formatSocial(d.social_value) : "—"} />
-      </div>
     </Sheet>
-  );
-}
-
-/** What is left to do among the French voters of the district, as numbers and as one stacked bar. */
-function ProgressCard({ progress: p }: { progress: DistrictProgress }) {
-  const n = (v: number) => v.toLocaleString("fr");
-  const segments = [
-    { key: "done", value: p.done, className: "bg-brand-600", label: "fait (personne vue, ou adresse réglée)" },
-    { key: "leafleted", value: p.leafleted, className: "bg-brand-200", label: "boîté, personne pas vue" },
-    { key: "not_leafleted", value: p.not_leafleted, className: "bg-zinc-200", label: "pas encore boîté" },
-  ];
-  return (
-    <Card className="space-y-3 p-3.5">
-      <div className="grid grid-cols-3 gap-2 text-center">
-        <div>
-          <p className="text-xl font-semibold tracking-tight tabular-nums">{n(p.total)}</p>
-          <p className="text-xs text-zinc-500">Français·es</p>
-        </div>
-        <div>
-          <p className="text-xl font-semibold tracking-tight tabular-nums">{n(p.remaining)}</p>
-          <p className="text-xs text-zinc-500">restant à faire</p>
-        </div>
-        <div>
-          <p className="text-xl font-semibold tracking-tight text-brand-700 tabular-nums">{formatPct(p.done_pct, 0)}</p>
-          <p className="text-xs text-zinc-500">déjà fait</p>
-        </div>
-      </div>
-      <div className="flex h-2.5 overflow-hidden rounded-full bg-zinc-100">
-        {segments.map((seg) => seg.value > 0 && <div key={seg.key} className={seg.className} style={{ width: `${(100 * seg.value) / p.total}%` }} />)}
-      </div>
-      <ul className="space-y-1 text-sm">
-        {segments.map((seg) => (
-          <li key={seg.key} className="flex items-center gap-2">
-            <span className={`size-2.5 shrink-0 rounded-full ${seg.className}`} />
-            <span className="w-10 shrink-0 text-right font-semibold tabular-nums">{n(seg.value)}</span>
-            <span className="text-zinc-600">{seg.label}</span>
-          </li>
-        ))}
-      </ul>
-    </Card>
   );
 }
 
@@ -602,7 +506,7 @@ function AgePyramid({ ages }: { ages: DistrictDetail["ages"] }) {
     <Card className="space-y-1 p-3.5">
       <p className="pb-1 text-sm font-semibold">Pyramide des âges</p>
       {known === 0 ? (
-        <p className="text-sm text-zinc-500">Année de naissance inconnue pour ces personnes.</p>
+        <p className="text-sm text-zinc-500">Âges inconnus.</p>
       ) : (
         [...ages.groups].reverse().map((g) => (
           <div key={g.label} className="flex items-center gap-2 text-xs">
@@ -616,7 +520,7 @@ function AgePyramid({ ages }: { ages: DistrictDetail["ages"] }) {
           </div>
         ))
       )}
-      {ages.unknown > 0 && known > 0 && <p className="pt-1 text-[11px] text-zinc-500">{ages.unknown} sans année de naissance</p>}
+      {ages.unknown > 0 && known > 0 && <p className="pt-1 text-[11px] text-zinc-500">{ages.unknown} âge inconnu</p>}
     </Card>
   );
 }

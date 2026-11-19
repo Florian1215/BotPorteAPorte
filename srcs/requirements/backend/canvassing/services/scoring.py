@@ -112,8 +112,8 @@ def criteria_for(organization=None) -> list[Criterion]:
         Criterion("party", f"Vote {party}", lambda d: _ratio(d.reference_votes, d.valid)),
         Criterion("abstention", "Abstention", lambda d: 1 - d.voters / d.eligible if d.voters is not None and d.eligible else None),
         # Among the French voters of the list (set by `rescore_organization` as `age_lfi_vote`), not the census.
-        Criterion("age", "Âge (vote LFI attendu)", lambda d: getattr(d, "age_lfi_vote", None)),
-        Criterion("density", "Densité", _density),
+        Criterion("age", "Âge", lambda d: getattr(d, "age_lfi_vote", None)),
+        Criterion("density", "Densité de Français", _density),
         # The poorer the better: a median income counts the other way round.
         Criterion("social", social, lambda d: d.social_value, higher_is_better=poorer_is_higher),
     ]

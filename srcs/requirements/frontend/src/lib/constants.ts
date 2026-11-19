@@ -173,10 +173,7 @@ export const CRITERION_FORMAT: Record<ScoreCriterionKey, (v: number) => string> 
   social: formatSocial,
 };
 
-export const CRITERION_HELP: Record<ScoreCriterionKey, string> = {
-  party: "Part des voix du parti le plus proche de LFI dans le pays, parmi les suffrages exprimés.",
-  abstention: "Inscrit·es qui n'ont pas voté : des électeur·rices à mobiliser.",
-  age: "Vote LFI attendu d'après l'âge des Français·es de la liste (18–24 ans : 41 %, 25–34 : 30 %, 35–49 : 36 %, 50–59 : 28 %, 60–69 : 24 %, 70 et plus : 19 %).",
-  density: "Français·es de la liste électorale par km² : plus de portes à l'heure.",
-  social: "Indicateur social de la zone (bas revenus, pauvreté, revenu médian…) : les zones les plus pauvres d'abord.",
+export const CRITERION_HELP: Partial<Record<ScoreCriterionKey, string>> = {
+  party: "Score du parti proche de LFI.",
+  age: "Vote LFI attendu selon l'âge.",
 };

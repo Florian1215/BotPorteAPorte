@@ -348,9 +348,6 @@ function OverviewSheet({
   return (
     <Sheet
       title={`Zones (${shown.toLocaleString("fr")})`}
-      subtitle={[data.election || "Bureaux de vote", data.reference_party && `parti de référence : ${data.reference_party}`]
-        .filter(Boolean)
-        .join(" · ")}
       locate={false}
       action={
         <button
@@ -543,7 +540,7 @@ function DistrictSheet({ id }: { id: number }) {
 
       <SectionTitle>Français·es de la liste</SectionTitle>
       <div className="grid grid-cols-2 gap-2">
-        <Metric label="Densité" value={d.density != null ? `${d.density.toLocaleString("fr")} Français·es/km²` : "—"} />
+        <Metric label="Densité de Français" value={d.density != null ? `${d.density.toLocaleString("fr")} Français·es/km²` : "—"} />
         <Metric label="Vote LFI attendu (âge)" value={formatPct(d.age_lfi_vote != null ? d.age_lfi_vote * 100 : null)} />
         <Metric label="18–29 ans" value={formatPct(d.share_18_29 != null ? d.share_18_29 * 100 : null)} />
         <Metric label="65 ans et plus" value={formatPct(d.share_65_plus != null ? d.share_65_plus * 100 : null)} />
@@ -652,7 +649,6 @@ function WeightsSheet({ data, onDone }: { data: DistrictMap; onDone: (changed: b
   return (
     <Sheet
       title="Pondération du score"
-      subtitle="Ce qui compte le plus pour choisir où faire du porte-à-porte."
       locate={false}
       footer={
         <div className="grid grid-cols-2 gap-2">
@@ -683,7 +679,9 @@ function WeightsSheet({ data, onDone }: { data: DistrictMap; onDone: (changed: b
               onChange={(e) => setWeights({ ...weights, [c.key]: Number(e.target.value) })}
               className="mt-1 w-full accent-brand-600"
             />
-            <span className="block text-xs text-zinc-500">{CRITERION_HELP[c.key as ScoreCriterionKey]}</span>
+            {CRITERION_HELP[c.key as ScoreCriterionKey] && (
+              <span className="block text-xs text-zinc-500">{CRITERION_HELP[c.key as ScoreCriterionKey]}</span>
+            )}
           </label>
         );
       })}
@@ -693,7 +691,7 @@ function WeightsSheet({ data, onDone }: { data: DistrictMap; onDone: (changed: b
         <>
           <SectionTitle>Parti de référence</SectionTitle>
           <p className="-mt-1 text-xs text-zinc-500">
-            Le parti le plus proche de LFI dans le pays. Plusieurs choix si c'était une liste commune : leurs voix s'additionnent.
+            Le ou les partis les plus proches de LFI dans ce pays : plus ils ont fait de voix dans une zone, plus elle est prioritaire.
           </p>
           <div className="flex flex-wrap gap-1.5">
             {data.party_options.map((name) => {

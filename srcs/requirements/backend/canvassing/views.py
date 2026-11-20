@@ -414,7 +414,8 @@ class ScoreWeightsView(DistrictManagerView):
 
 class NearbyAddressesView(CanvasserView):
     def get(self, request):
-        """Addresses still to visit around a point (the bot's /adresses_alentours)."""
+        """Addresses still to visit around a point (the bot's /adresses_alentours): dots on the map only, never the
+        street address or the names (any militant can query any point)."""
         serializer = NearbySerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
         lat, lon, radius_km = (serializer.validated_data[k] for k in ("lat", "lon", "radius_km"))
@@ -432,7 +433,7 @@ class NearbyAddressesView(CanvasserView):
             .filter(near=True)
         )
         total = qs.count()
-        addresses = [address_to_dict(a, with_names=False) for a in qs[:NEARBY_LIMIT]]
+        addresses = [{"id": a.id, "lat": a.location.y, "lon": a.location.x} for a in qs.only("id", "location")[:NEARBY_LIMIT]]
         return Response({"total": total, "truncated": total > len(addresses), "addresses": addresses})
 
 

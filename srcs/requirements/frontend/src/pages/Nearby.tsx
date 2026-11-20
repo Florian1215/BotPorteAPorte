@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Circle, CircleMarker, Popup } from "react-leaflet";
+import { Circle, CircleMarker } from "react-leaflet";
 
 import { api, errorMessage } from "../api/client";
 import type { LatLon, NearbyResponse } from "../api/types";
@@ -74,10 +74,9 @@ export default function Nearby() {
             key={a.id}
             center={[a.lat, a.lon]}
             radius={6}
+            interactive={false}
             pathOptions={{ color: "white", weight: 1.5, fillColor: "#d1271c", fillOpacity: 0.9 }}
-          >
-            <Popup>{a.label}</Popup>
-          </CircleMarker>
+          />
         ))}
       </MapLayers>
 

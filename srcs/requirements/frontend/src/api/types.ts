@@ -269,7 +269,8 @@ export type CityPack = {
   recommended: boolean;
 };
 
-export type NearbyResponse = { total: number; truncated: boolean; addresses: AddressDTO[] };
+/** Dots on the map only: no street address, no names. */
+export type NearbyResponse = { total: number; truncated: boolean; addresses: { id: number; lat: number; lon: number }[] };
 
 export type MyStats = {
   total_success: number;

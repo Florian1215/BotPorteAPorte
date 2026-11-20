@@ -12,30 +12,51 @@ import { DEFAULT_CENTER } from "../lib/constants";
 /** Height reserved for the floating top bar. */
 const TOP_BAR_PX = 72;
 
-type TileConfig = { tile_url: string; attribution: string };
+type TileConfig = { tile_url: string; attribution: string; provider?: string; fallback?: TileConfig | null };
 
-/** Used if /api/config/ cannot be reached: keyless CARTO tiles. */
-const FALLBACK_TILES: TileConfig = {
-  tile_url: "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
-  attribution:
-    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+/** OpenStreetMap's standard tiles (no key): used if /api/config/ cannot be reached, or when CARTO tiles fail. */
+const OSM_TILES: TileConfig = {
+  tile_url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  provider: "osm",
 };
 
-/** Tile URL (with the CARTO API key) comes from the backend at runtime, so the key lives only in srcs/.env. */
-function useTileConfig(): TileConfig | null {
+/** Tiles failing before this many load fine: CARTO is down (or refuses us), switch to the fallback. */
+const TILE_ERRORS_BEFORE_FALLBACK = 6;
+
+/**
+ * Tile URL comes from the backend at runtime (CARTO by default, OpenStreetMap when the server finds CARTO not
+ * working), so the key lives only in srcs/.env. If CARTO tiles still fail in the browser, `onTileError` switches
+ * to the fallback.
+ */
+function useTileConfig() {
   const [tiles, setTiles] = useState<TileConfig | null>(null);
+  const stats = useRef({ errors: 0, loads: 0 });
   useEffect(() => {
     api<{ map: TileConfig }>("/config/")
       .then((config) => setTiles(config.map))
-      .catch(() => setTiles(FALLBACK_TILES));
+      .catch(() => setTiles(OSM_TILES));
   }, []);
-  return tiles;
+  const onTileLoad = useCallback(() => {
+    stats.current.loads += 1;
+  }, []);
+  const onTileError = useCallback(() => {
+    const s = stats.current;
+    s.errors += 1;
+    if (s.errors >= TILE_ERRORS_BEFORE_FALLBACK && s.errors > s.loads)
+      setTiles((current) => {
+        if (!current?.fallback) return current;
+        console.warn("Map tiles failing, switching to OpenStreetMap");
+        return current.fallback;
+      });
+  }, []);
+  return { tiles, onTileLoad, onTileError };
 }
 
 /** Full-screen map, always mounted behind the whole app. */
 export function MapShell({ children }: { children: ReactNode }) {
   const [map, setMap] = useState<L.Map | null>(null);
-  const tiles = useTileConfig();
+  const { tiles, onTileLoad, onTileError } = useTileConfig();
   const sheetHeight = useRef(0);
   const focus = useRef<{ point: [number, number]; zoom: number } | null>(null);
   const flying = useRef(false);
@@ -95,7 +116,16 @@ export function MapShell({ children }: { children: ReactNode }) {
           attributionControl={false}
           preferCanvas
         >
-          {tiles && <TileLayer attribution={tiles.attribution} url={tiles.tile_url} maxZoom={20} />}
+          {tiles && (
+            <TileLayer
+              key={tiles.tile_url}
+              attribution={tiles.attribution}
+              url={tiles.tile_url}
+              maxZoom={20}
+              maxNativeZoom={tiles.provider === "osm" ? 19 : 18}
+              eventHandlers={{ tileload: onTileLoad, tileerror: onTileError }}
+            />
+          )}
           <AttributionControl position="topright" prefix={false} />
         </MapContainer>
         {children}

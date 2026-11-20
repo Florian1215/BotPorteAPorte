@@ -173,12 +173,14 @@ EMAIL_USE_SSL = env_bool("EMAIL_USE_SSL", False)
 EMAIL_TIMEOUT = 15
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", "Porte-à-porte <no-reply@localhost>")
 
-# --- Map tiles (CARTO Voyager basemap) ---
-CARTO_API_KEY = env("CARTO_API_KEY")
-MAP_TILE_URL = "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" + (
+# --- Map tiles: CARTO Voyager by default, OpenStreetMap's tiles when CARTO does not work (see config/map_tiles.py).
+# MAP_TILES=osm forces OpenStreetMap.
+MAP_TILES = env("MAP_TILES", "carto").strip().lower()
+# Quotes, spaces or a Windows line ending pasted with the key would make CARTO refuse it.
+CARTO_API_KEY = env("CARTO_API_KEY").strip().strip("\"'").strip()
+OSM_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+OSM_TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+CARTO_TILE_URL = "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" + (
     f"?key={CARTO_API_KEY}" if CARTO_API_KEY else ""
 )
-MAP_TILE_ATTRIBUTION = (
-    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> '
-    '&copy; <a href="https://carto.com/attributions">CARTO</a>'
-)
+CARTO_ATTRIBUTION = OSM_ATTRIBUTION + ' &copy; <a href="https://carto.com/attributions">CARTO</a>'

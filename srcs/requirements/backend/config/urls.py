@@ -3,6 +3,8 @@ from django.contrib import admin
 from django.http import JsonResponse
 from django.urls import include, path
 
+from .map_tiles import tile_config
+
 admin.site.site_header = "Porte-à-porte — administration"
 admin.site.site_title = "Porte-à-porte"
 
@@ -11,7 +13,7 @@ def public_config(request):
     """Runtime settings the frontend needs (no rebuild when they change)."""
     return JsonResponse(
         {
-            "map": {"tile_url": settings.MAP_TILE_URL, "attribution": settings.MAP_TILE_ATTRIBUTION},
+            "map": tile_config(),
             "telegram_bot_id": settings.TELEGRAM_BOT_ID,
         }
     )

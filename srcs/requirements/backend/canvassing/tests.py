@@ -918,3 +918,37 @@ class LeaderboardElectionTests(TestCase):
 
         orgs = client.get("/api/stats/leaderboard/", {"scope": "organizations"}).json()
         self.assertEqual(next(r["doors"] for r in orgs["rows"] if r["id"] == organization.id), 1)
+
+
+class DedupeAddressesTests(TestCase):
+    def test_bot_rows_are_merged_into_the_lec_row_of_the_same_person(self):
+        from django.contrib.gis.geos import Point
+
+        voter_list = VoterList.objects.create(name="LEC dédoublonnage")
+        election = Election.objects.create(name="Élection dédoublonnage")
+        common = {"voter_list": voter_list, "zip_code": "10115", "city": "Berlin", "location": Point(13.4, 52.5)}
+        lec = Address.objects.create(
+            name="Müller", first_names="Marie Claire Anne", address="Torstraße 12", birth_year=1980,
+            source_address="Torstraße 12 | 10115 Berlin", **common,
+        )
+        homonym = Address.objects.create(
+            name="Martin", first_names="Paul", address="Torstraße 1", birth_year=1990, source_address="x", **common
+        )
+        Address.objects.create(name="Martin", first_names="Paul Louis", address="Kastanienallee 7", birth_year=1950, source_address="y", **common)
+        # From the bot: one first name only, no birth year, a promise of vote.
+        bot = Address.objects.create(name="MULLER", first_names="Marie", address="Torstr. 12", status=Status.COMMITMENT_TO_VOTE, **common)
+        Visit.objects.create(address=bot, result="commitment_to_vote", election=election)
+        bot_homonym = Address.objects.create(name="Martin", first_names="Paul", address="Torstrasse 1", **common)
+        unknown = Address.objects.create(name="Dupont", first_names="Jean", address="Rue 3", **common)
+
+        out = io.StringIO()
+        call_command("dedupe_addresses", stdout=out)  # simulation
+        self.assertTrue(Address.all_objects.filter(pk=bot.pk).exists())
+
+        call_command("dedupe_addresses", "--apply", stdout=out)
+        self.assertFalse(Address.all_objects.filter(pk__in=[bot.pk, bot_homonym.pk]).exists())
+        lec.refresh_from_db()
+        self.assertEqual((lec.first_names, lec.birth_year, lec.status), ("Marie Claire Anne", 1980, Status.COMMITMENT_TO_VOTE))
+        self.assertEqual(Visit.objects.get(election=election).address_id, lec.pk)
+        self.assertTrue(Address.all_objects.filter(pk=homonym.pk).exists())  # the street chose this Paul Martin
+        self.assertTrue(Address.all_objects.filter(pk=unknown.pk).exists())  # no LEC row: kept

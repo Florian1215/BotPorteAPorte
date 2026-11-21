@@ -344,7 +344,7 @@ export function Sheet({
     const el = ref.current;
     if (!el) return;
     if (desktop) {
-      // Side panel: the map keeps what is right of it free.
+      // Card at the bottom left: the map keeps what is right of it free.
       const update = () => {
         const right = panel.current?.getBoundingClientRect().right ?? 0;
         if (right !== sheetLeft.current || sheetHeight.current !== 0) {
@@ -356,9 +356,11 @@ export function Sheet({
       update();
       const observer = new ResizeObserver(update);
       observer.observe(document.body);
+      if (panel.current) observer.observe(panel.current);
       return () => {
         observer.disconnect();
         sheetLeft.current = 0;
+        sheetHeight.current = 0;
       };
     }
     const update = () => {
@@ -432,15 +434,15 @@ export function Sheet({
   if (desktop)
     return (
       <>
-        {/* Side panel, right of the side menu (--sidebar, set by the signed-in layout). */}
+        {/* Card at the bottom left (fixed width, as tall as its content), right of the side menu (--sidebar, set by the signed-in layout). */}
         <div
           ref={ref}
-          className="pointer-events-none absolute top-4 bottom-4 left-[calc(var(--sidebar,0px)+1rem)] z-[1000] flex w-[27rem] flex-col gap-3"
+          className="pointer-events-none absolute bottom-4 left-[calc(var(--sidebar,0px)+1rem)] z-[1000] flex max-h-[calc(100dvh-2rem)] w-[28rem] flex-col gap-3"
         >
           {above}
           <div
             ref={panel}
-            className="pointer-events-auto flex min-h-0 animate-[fade-in_.2s_ease-out] flex-col rounded-3xl bg-white shadow-float ring-1 ring-zinc-950/5"
+            className="pointer-events-auto flex min-h-0 animate-[sheet-in_.25s_ease-out] flex-col overflow-hidden rounded-3xl bg-white shadow-float ring-1 ring-zinc-950/5"
           >
             {(title || action) && (
               <div className="flex shrink-0 items-start gap-3 px-6 pt-5 pb-4">
@@ -462,7 +464,7 @@ export function Sheet({
               </div>
             )}
             {children && (
-              <div className="min-h-0 shrink overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
+              <div className="min-h-0 shrink overflow-y-auto overscroll-contain">
                 <div className={`space-y-3 px-6 pb-5 ${title || action ? "pt-0.5" : "pt-5"}`}>{children}</div>
               </div>
             )}

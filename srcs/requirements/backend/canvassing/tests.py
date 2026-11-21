@@ -473,6 +473,22 @@ class ElectionTelegramTests(TestCase):
         self.assertEqual(Election.objects.filter(is_current=True).get(), presidential)
         self.assertEqual(election_service.phrase(presidential), "pour l'élection présidentielle 2027")
 
+    def test_do_not_contact_and_not_found_from_a_past_election_stay_out_of_the_tours(self):
+        from django.contrib.gis.geos import Point
+
+        common = {"voter_list": self.martin.voter_list, "zip_code": "10115", "city": "Berlin", "location": Point(13.4, 52.5)}
+        # Statuses out of step with their history (e.g. an old import): the last visit decides.
+        hostile = Address.objects.create(name="A", address="Rue 1", status=Status.COMMITMENT_TO_VOTE, **common)
+        Visit.objects.create(address=hostile, result="do_not_contact", election=self.election)
+        missing = Address.objects.create(name="B", address="Rue 2", status=Status.TO_VISIT, **common)
+        Visit.objects.create(address=missing, result="address_failure", election=self.election)
+
+        election_service.set_current(Election.objects.create(name="Élection européenne"))
+        hostile.refresh_from_db()
+        missing.refresh_from_db()
+        self.assertEqual((hostile.status, missing.status), (Status.DO_NOT_CONTACT, Status.FAILURE))
+        self.assertEqual(Address.objects.get(pk=self.martin.pk).status, Status.TO_VISIT)  # a promise: to visit again
+
 
 class SiteAdminTests(TestCase):
     def test_only_site_admins(self):

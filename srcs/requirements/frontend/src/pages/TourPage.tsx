@@ -397,11 +397,6 @@ function TourControls({ tour, setTour }: { tour: Tour; setTour: (t: Tour) => voi
           // 1. who (the name on the doorbell)
           <span key={stepKey} className="block animate-[step-in_.35s_cubic-bezier(.2,.8,.2,1)] text-[1.6rem] short:text-[1.35rem] leading-tight font-bold tracking-[-0.025em]">
             {personName(current)}
-            {current.address.birth_year && (
-              <span className="ml-2 align-middle text-base font-medium tracking-normal text-zinc-400">
-                {new Date().getFullYear() - current.address.birth_year} ans
-              </span>
-            )}
           </span>
         }
         subtitle={

@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, Link2, Mail, MailCheck, Pencil, RotateCcw, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, Link2, Mail, MailCheck, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -12,9 +12,12 @@ import { NAVIGATION_APPS, ROLE_LABEL, ROUTE_DISPLAYS } from "../lib/constants";
 export default function Account() {
   const { user } = useAuth();
   if (!user) return null;
+  const fullName = [user.first_name, user.last_name].filter(Boolean).join(" ");
 
   return (
     <Sheet title="Mon compte" subtitle={`${ROLE_LABEL[user.role]}${user.organization ? ` · ${user.organization.name}` : ""}`} locate={false}>
+      {/* Name (read only: set at sign-up). */}
+      {fullName && <p className="truncate text-center text-3xl font-semibold tracking-tight">{fullName}</p>}
       <SectionTitle>Navigation</SectionTitle>
       <PreferenceChoice field="navigation_app" options={NAVIGATION_APPS} />
 

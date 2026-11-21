@@ -96,6 +96,13 @@ class NavigationApp(models.TextChoices):
     APPLE = "apple", "Apple Plans"
 
 
+class RouteDisplay(models.TextChoices):
+    """How a tour's path is drawn on the map."""
+
+    STREET = "street", "Suivre les rues"
+    STRAIGHT = "straight", "Lignes droites"
+
+
 ROLE_RANK = {Role.MILITANT: 0, Role.EXPERIENCED: 1, Role.MANAGER: 2, Role.ADMIN: 3}
 
 
@@ -152,6 +159,10 @@ class User(AbstractUser):
     # App opened when tapping an address during a tour.
     navigation_app = models.CharField(
         "application de navigation", max_length=16, choices=NavigationApp.choices, default=NavigationApp.GOOGLE
+    )
+    # Tour map: the walking route along the streets, or straight lines from door to door.
+    route_display = models.CharField(
+        "tracé des tournées", max_length=16, choices=RouteDisplay.choices, default=RouteDisplay.STREET
     )
 
     USERNAME_FIELD = "email"

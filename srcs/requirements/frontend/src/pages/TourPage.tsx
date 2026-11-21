@@ -126,18 +126,30 @@ function TourLayers({
     [tour.id], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const stopsLine = useMemo<[number, number][]>(
-    () => [[tour.start.lat, tour.start.lon], ...groups.map((g) => [g.stops[0].address.lat, g.stops[0].address.lon] as [number, number])],
-    [groups, tour.start],
+    () => [
+      [tour.start.lat, tour.start.lon],
+      ...groups.map((g) => [g.stops[0].address.lat, g.stops[0].address.lon] as [number, number]),
+      ...(tour.end ? [[tour.end.lat, tour.end.lon] as [number, number]] : []),
+    ],
+    [groups, tour.start, tour.end],
   );
   const isActive = tour.status === "active";
+  // User preference (Mon compte): the walking route along the streets, or straight lines door to door.
+  const { user } = useAuth();
+  const street = user?.route_display !== "straight" && !!tour.route;
 
   return (
     <MapLayers>
       <FitBounds points={allPoints} fitKey={`${tour.id}-${tour.status}`} />
-      {tour.route && (
-        <Polyline positions={tour.route} interactive={false} pathOptions={{ color: "#d1271c", weight: 5, opacity: 0.55, lineCap: "round", lineJoin: "round" }} />
+      {street ? (
+        <Polyline positions={tour.route!} interactive={false} pathOptions={{ color: "#d1271c", weight: 5, opacity: 0.55, lineCap: "round", lineJoin: "round" }} />
+      ) : (
+        <Polyline
+          positions={stopsLine}
+          interactive={false}
+          pathOptions={{ color: "#d1271c", weight: 3, opacity: 0.7, dashArray: "6 8", lineCap: "round", lineJoin: "round" }}
+        />
       )}
-      <Polyline positions={stopsLine} interactive={false} pathOptions={{ color: "#18181b", weight: 2, dashArray: "2 7", lineCap: "round", opacity: 0.45 }} />
       <PinMarker point={tour.start} color="#059669" label="Départ" kind="start" />
       {tour.end && <PinMarker point={tour.end} color="#18181b" label="Arrivée" kind="end" />}
       {groups.map((group) => {

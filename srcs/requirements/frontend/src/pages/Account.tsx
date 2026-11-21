@@ -3,71 +3,23 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { api, errorMessage } from "../api/client";
-import type { LoginRequestResponse, NavigationApp, User } from "../api/types";
+import type { LoginRequestResponse, User } from "../api/types";
 import { Alert, Button, Card, Field, inputClass, SectionTitle, Segmented, Sheet } from "../components/ui";
 import { useAuth } from "../context/AuthContext";
-import { NAVIGATION_APPS, ROLE_LABEL } from "../lib/constants";
+import { NAVIGATION_APPS, ROLE_LABEL, ROUTE_DISPLAYS } from "../lib/constants";
 
-/** The user's own information: name, and email (changed only once the new address is confirmed). */
+/** The user's own settings: preferences, and email (changed only once the new address is confirmed). */
 export default function Account() {
-  const { user, updateProfile } = useAuth();
-  const [names, setNames] = useState({ first_name: user?.first_name ?? "", last_name: user?.last_name ?? "" });
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
+  const { user } = useAuth();
   if (!user) return null;
-  const dirty = names.first_name.trim() !== user.first_name || names.last_name.trim() !== user.last_name;
-
-  const save = async (e: FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    setError(null);
-    setSaved(false);
-    try {
-      await updateProfile({ first_name: names.first_name.trim(), last_name: names.last_name.trim() });
-      setSaved(true);
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setSaving(false);
-    }
-  };
 
   return (
     <Sheet title="Mon compte" subtitle={`${ROLE_LABEL[user.role]}${user.organization ? ` · ${user.organization.name}` : ""}`} locate={false}>
-      <SectionTitle>Identité</SectionTitle>
-      <form onSubmit={save} className="space-y-3">
-        {error && <Alert>{error}</Alert>}
-        {saved && !dirty && <Alert kind="success">Modifications enregistrées.</Alert>}
-        <div className="grid grid-cols-2 gap-2">
-          <Field label="Prénom">
-            <input
-              className={inputClass}
-              value={names.first_name}
-              onChange={(e) => setNames({ ...names, first_name: e.target.value })}
-              autoComplete="given-name"
-              maxLength={150}
-              required
-            />
-          </Field>
-          <Field label="Nom">
-            <input
-              className={inputClass}
-              value={names.last_name}
-              onChange={(e) => setNames({ ...names, last_name: e.target.value })}
-              autoComplete="family-name"
-              maxLength={150}
-            />
-          </Field>
-        </div>
-        <Button type="submit" className="w-full" icon={Save} loading={saving} disabled={!dirty}>
-          Enregistrer
-        </Button>
-      </form>
-
       <SectionTitle>Navigation</SectionTitle>
-      <NavigationAppChoice />
+      <PreferenceChoice field="navigation_app" options={NAVIGATION_APPS} />
+
+      <SectionTitle>Tracé des tournées</SectionTitle>
+      <PreferenceChoice field="route_display" options={ROUTE_DISPLAYS} />
 
       <SectionTitle>Adresse email</SectionTitle>
       <EmailChange current={user.email} />
@@ -81,18 +33,23 @@ export default function Account() {
   );
 }
 
-/** The app opened when tapping an address during a tour; saved as soon as it is picked. */
-function NavigationAppChoice() {
+type Preference = "navigation_app" | "route_display";
+
+/**
+ * A preference saved as soon as it is picked: the app opened when tapping an address during a tour,
+ * or how the tour's path is drawn (along the streets / straight lines).
+ */
+function PreferenceChoice<F extends Preference>({ field, options }: { field: F; options: { value: User[F]; label: string }[] }) {
   const { user, updateProfile } = useAuth();
-  const [value, setValue] = useState<NavigationApp>(user?.navigation_app ?? "google");
+  const [value, setValue] = useState<User[F]>(user?.[field] ?? options[0].value);
   const [error, setError] = useState<string | null>(null);
 
-  const pick = async (app: NavigationApp) => {
+  const pick = async (next: User[F]) => {
     const previous = value;
-    setValue(app);
+    setValue(next);
     setError(null);
     try {
-      await updateProfile({ navigation_app: app });
+      await updateProfile({ [field]: next });
     } catch (err) {
       setValue(previous);
       setError(errorMessage(err));
@@ -102,7 +59,7 @@ function NavigationAppChoice() {
   return (
     <div className="space-y-2">
       {error && <Alert>{error}</Alert>}
-      <Segmented options={NAVIGATION_APPS} value={value} onChange={pick} />
+      <Segmented options={options} value={value} onChange={pick} />
     </div>
   );
 }

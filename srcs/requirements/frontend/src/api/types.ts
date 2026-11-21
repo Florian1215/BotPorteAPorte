@@ -57,9 +57,12 @@ export type User = {
   telegram_id: number | null;
   /** App opened when tapping an address during a tour. */
   navigation_app: NavigationApp;
+  /** Tour map: walking route along the streets, or straight lines between the doors. */
+  route_display: RouteDisplay;
 };
 
 export type NavigationApp = "google" | "apple";
+export type RouteDisplay = "street" | "straight";
 
 export type Member = {
   id: number;

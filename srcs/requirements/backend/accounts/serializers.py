@@ -110,6 +110,7 @@ class MeSerializer(serializers.ModelSerializer):
             "organization",
             "telegram_id",
             "navigation_app",
+            "route_display",
         ]
         read_only_fields = ["telegram_id"]
 
@@ -119,7 +120,7 @@ class ProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ["first_name", "last_name", "navigation_app"]
+        fields = ["first_name", "last_name", "navigation_app", "route_display"]
 
 
 class MemberSerializer(serializers.ModelSerializer):

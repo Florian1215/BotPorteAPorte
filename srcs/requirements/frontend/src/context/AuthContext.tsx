@@ -1,8 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 
 import { api, ApiError } from "../api/client";
-import type { LoginRequestResponse, NavigationApp, User } from "../api/types";
+import type { LoginRequestResponse, User } from "../api/types";
 import { LAST_ORGANIZATION_KEY } from "../lib/constants";
+
+type ProfileUpdate = Partial<Pick<User, "first_name" | "last_name" | "navigation_app" | "route_display">>;
 
 type AuthState = {
   user: User | null;
@@ -13,7 +15,7 @@ type AuthState = {
   verifyCode: (email: string, code: string) => Promise<void>;
   /** Step 2 (alternative): the link of the email. */
   verifyLink: (token: string) => Promise<void>;
-  updateProfile: (data: { first_name?: string; last_name?: string; navigation_app?: NavigationApp }) => Promise<void>;
+  updateProfile: (data: ProfileUpdate) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
   setUser: (user: User) => void;
@@ -88,7 +90,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await api("/auth/csrf/");
   }, []);
 
-  const updateProfile = async (data: { first_name?: string; last_name?: string; navigation_app?: NavigationApp }) => {
+  const updateProfile = async (data: ProfileUpdate) => {
     setUser(await api<User>("/auth/me/", { method: "PATCH", body: data }));
   };
 

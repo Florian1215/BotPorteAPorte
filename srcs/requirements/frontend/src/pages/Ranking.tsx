@@ -11,18 +11,23 @@ type Scope = "group" | "organizations" | "all";
 
 const MEDALS = ["text-amber-500", "text-zinc-400", "text-orange-700"];
 
-/** Doors knocked: within my group, between organizations, or every militant. */
+/** Doors knocked for the current election: within my group, between organizations, or every militant. */
 export default function Ranking() {
   const { user } = useAuth();
   const [scope, setScope] = useState<Scope>("group");
   const [board, setBoard] = useState<Leaderboard | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Kept across tabs, so the subtitle does not flicker while the next one loads.
+  const [election, setElection] = useState<string | null | undefined>(undefined);
 
   useEffect(() => {
     setBoard(null);
     setError(null);
     api<Leaderboard>("/stats/leaderboard/", { query: { scope } })
-      .then(setBoard)
+      .then((b) => {
+        setBoard(b);
+        setElection(b.election);
+      })
       .catch((e) => setError(errorMessage(e)));
   }, [scope]);
 
@@ -30,7 +35,11 @@ export default function Ranking() {
   const rows = board && board.scope === scope ? board : null;
 
   return (
-    <Sheet title="Classement" subtitle="Nombre de portes frappées" locate={false}>
+    <Sheet
+      title="Classement"
+      subtitle={election ? `Portes frappées · ${election}` : "Nombre de portes frappées"}
+      locate={false}
+    >
       <Segmented
         value={scope}
         onChange={setScope}

@@ -885,3 +885,36 @@ class SharedVoterListTests(TestCase):
         # A list with addresses cannot be deleted (their visits would go with them).
         self.assertEqual(client.delete(f"/api/manage/voter-lists/{self.voter_list.id}/").status_code, 400)
         self.assertEqual(client.delete(f"/api/manage/voter-lists/{other.id}/").status_code, 400 if other.addresses.exists() else 204)
+
+
+class LeaderboardElectionTests(TestCase):
+    def test_only_the_doors_of_the_current_election_count(self):
+        from django.contrib.gis.geos import Point
+        from django.test import Client
+
+        from accounts.models import User
+
+        Election.objects.update(is_current=False)
+        current = Election.objects.create(name="Élection en cours", is_current=True)
+        past = Election.objects.create(name="Élection passée")
+        voter_list = VoterList.objects.create(name="LEC classement")
+        organization = Organization.objects.create(code="rank", name="Rank", voter_list=voter_list)
+        alice = User.objects.create_user(email="a@demo.test", first_name="Alice", organization=organization, is_approved=True)
+        bob = User.objects.create_user(email="b@demo.test", first_name="Bob", organization=organization, is_approved=True)
+        address = Address.objects.create(
+            voter_list=voter_list, name="X", address="Rue 1", zip_code="10115", city="Berlin", location=Point(13.4, 52.5)
+        )
+        # Bob knocked lots of doors in the past election, Alice one in the current one.
+        for _ in range(3):
+            Visit.objects.create(address=address, user=bob, result="failure", election=past)
+        Visit.objects.create(address=address, user=alice, result="failure", election=current)
+
+        client = Client()
+        client.force_login(alice)
+        group = client.get("/api/stats/leaderboard/", {"scope": "group"}).json()
+        self.assertEqual(group["election"], "Élection en cours")
+        doors = {r["id"]: (r["rank"], r["doors"]) for r in group["rows"]}
+        self.assertEqual(doors, {alice.id: (1, 1), bob.id: (2, 0)})
+
+        orgs = client.get("/api/stats/leaderboard/", {"scope": "organizations"}).json()
+        self.assertEqual(next(r["doors"] for r in orgs["rows"] if r["id"] == organization.id), 1)

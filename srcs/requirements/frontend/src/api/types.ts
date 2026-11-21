@@ -294,9 +294,11 @@ export type OrganizationRankRow = {
   is_me: boolean;
 };
 
-export type Leaderboard =
+/** Only the doors knocked for the current election count (`election`: its name, null when none is set). */
+export type Leaderboard = { election: string | null } & (
   | { scope: "group" | "all"; rows: MemberRankRow[] }
-  | { scope: "organizations"; rows: OrganizationRankRow[] };
+  | { scope: "organizations"; rows: OrganizationRankRow[] }
+);
 
 export type OrganizationOverview = {
   total: number;

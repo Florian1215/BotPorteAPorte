@@ -440,11 +440,16 @@ class NearbyAddressesView(CanvasserView):
 # --------------------------------------------------------------------------- stats
 
 
-def ranked_members(queryset):
-    """Members with their number of doors knocked (= feedbacks given) and successes, best first."""
+_ALL_VISITS = object()
+
+
+def ranked_members(queryset, election=_ALL_VISITS):
+    """Members with their number of doors knocked (= feedbacks given) and successes, best first.
+    With `election`, only the visits of that election count (None: visits without election)."""
+    visits = Q() if election is _ALL_VISITS else Q(visits__election=election)
     return queryset.annotate(
-        doors=Count("visits"),
-        successes=Count("visits", filter=Q(visits__result__in=[r.value for r in SUCCESS_RESULTS])),
+        doors=Count("visits", filter=visits),
+        successes=Count("visits", filter=visits & Q(visits__result__in=[r.value for r in SUCCESS_RESULTS])),
     ).order_by("-doors", "-successes", "first_name", "email")
 
 
@@ -508,11 +513,14 @@ def top_and_me(rows: list[dict], is_me) -> list[dict]:
 
 
 class LeaderboardView(CanvasserView):
-    """Doors knocked: `scope=group` (my organization), `all` (every militant), `organizations` (organizations)."""
+    """Doors knocked for the current election: `scope=group` (my organization), `all` (every militant),
+    `organizations` (organizations)."""
 
     def get(self, request):
         user = request.user
         scope = request.query_params.get("scope", "group")
+        election = Election.current()
+        election_name = election.name if election else None
 
         if scope == "organizations":
             from accounts.models import Organization
@@ -521,7 +529,8 @@ class LeaderboardView(CanvasserView):
             orgs = list(Organization.objects.all())
             for o in orgs:
                 o.doors = Visit.objects.filter(
-                    address_id__in=organization_addresses(o, Address.all_objects.all()).values("id")
+                    address_id__in=organization_addresses(o, Address.all_objects.all()).values("id"),
+                    election=election,
                 ).count()
             orgs.sort(key=lambda o: (-o.doors, o.name))
             members = dict(
@@ -541,7 +550,7 @@ class LeaderboardView(CanvasserView):
                     for o in orgs
                 ]
             )
-            return Response({"scope": scope, "rows": top_and_me(rows, lambda r: r["is_me"])})
+            return Response({"scope": scope, "election": election_name, "rows": top_and_me(rows, lambda r: r["is_me"])})
 
         members = organization_members_all() if scope == "all" else organization_members(user.organization_id)
         rows = with_ranks(
@@ -553,10 +562,16 @@ class LeaderboardView(CanvasserView):
                     "doors": m.doors,
                     "is_me": m.id == user.id,
                 }
-                for m in ranked_members(members.select_related("organization"))
+                for m in ranked_members(members.select_related("organization"), election=election)
             ]
         )
-        return Response({"scope": "all" if scope == "all" else "group", "rows": top_and_me(rows, lambda r: r["is_me"])})
+        return Response(
+            {
+                "scope": "all" if scope == "all" else "group",
+                "election": election_name,
+                "rows": top_and_me(rows, lambda r: r["is_me"]),
+            }
+        )
 
 
 class OrganizationOverviewView(CanvasserView):

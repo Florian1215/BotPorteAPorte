@@ -408,62 +408,28 @@ class ActiveTourTests(TestCase):
         self.assertEqual(response.json()["tour_id"], tour.id)
 
 
-# --------------------------------------------------------------------------- bot database import & elections
-
-import tempfile  # noqa: E402
-
-from django.core.management import call_command  # noqa: E402
+# --------------------------------------------------------------------------- elections & Telegram link
 
 from canvassing.models import Election, Status, Visit  # noqa: E402
 from canvassing.services import elections as election_service  # noqa: E402
 
-BOT_DUMP = """--
--- PostgreSQL database dump
---
-COPY public.area (id, name, consulat, geometry, score, archived, note) FROM stdin;
-\\.
-COPY public.address (id, consulat, usage_name, first_name, address, zip_code, city, lat, lon, n_visits, status, visit_planned_at, visit_planned_by, family_name) FROM stdin;
-1\tBERLIN\t\\N\tCamille\tTorstraße 12\t10115\tBerlin\t52.53\t13.40\t1\t4\t2026-05-10 18:30:00\t123\tMARTIN
-2\tBERLIN\t\\N\tCamille\tTorstraße 12\t10115\tBerlin\t52.53\t13.40\t0\t\\N\t\\N\t\\N\tMARTIN
-3\tBERLIN\tDURAND\tSacha\tKastanienallee 7\t10435\tBerlin\t52.54\t13.41\t2\t7\t2026-05-11 10:00:00\t124\tDUPUIS
-4\tWIEN\t\\N\tAlex\tPraterstraße 1\t1020\tWien\t48.21\t16.38\t0\t\\N\t\\N\t\\N\tLEROY
-\\.
-"""
 
-
-class BotImportTests(TestCase):
+class ElectionTelegramTests(TestCase):
     def setUp(self):
-        self.berlin = Organization.objects.create(code="berlin-insoumise", name="Berlin Insoumise", city="Berlin")
-        self.file = tempfile.NamedTemporaryFile("w", suffix=".sql", delete=False, encoding="utf-8")
-        self.file.write(BOT_DUMP)
-        self.file.close()
+        from django.contrib.gis.geos import Point
 
-    def run_import(self, *args):
-        out = io.StringIO()
-        call_command("import_bot_db", self.file.name, *args, stdout=out)
-        return out.getvalue()
+        voter_list = VoterList.objects.create(name="LEC Berlin test")
+        self.berlin = Organization.objects.create(code="berlin-insoumise", name="Berlin Insoumise", city="Berlin", voter_list=voter_list)
+        self.election, _ = Election.objects.get_or_create(name="Élection consulaire 2026")
+        Election.objects.update(is_current=False)
+        Election.objects.filter(pk=self.election.pk).update(is_current=True)
+        common = {"voter_list": voter_list, "zip_code": "10115", "city": "Berlin", "location": Point(13.4, 52.5)}
+        self.martin = Address.objects.create(name="MARTIN", first_names="Camille", address="Torstraße 12", status=Status.COMMITMENT_TO_VOTE, **common)
+        self.leroy = Address.objects.create(name="LEROY", first_names="Alex", address="Praterstraße 1", status=Status.DO_NOT_CONTACT, **common)
+        # A visit made with the old Telegram bot: only the Telegram id of who made it is known.
+        Visit.objects.create(address=self.martin, result="commitment_to_vote", election=self.election, telegram_user_id=123)
 
-    def test_import(self):
-        output = self.run_import()
-        self.assertIn("Nouvelles adresses : 3", output)
-        self.assertIn("1 dans le fichier", output)
-        self.assertIn("1 promesses de vote pour l'élection consulaire 2026", output)
-        martin = Address.objects.get(voter_list__organizations=self.berlin, name="MARTIN")
-        self.assertEqual(martin.status, Status.COMMITMENT_TO_VOTE)  # the duplicate with a visit was kept
-        visit = Visit.objects.get(address=martin)
-        self.assertEqual((visit.election.name, visit.created_at.day), ("Élection consulaire 2026", 10))
-        durand = Address.objects.get(name="DURAND")
-        self.assertEqual(durand.status, Status.TO_VISIT)  # absent → to visit again
-        self.assertEqual(Visit.objects.get(address=durand).absent_detail, "leaflet")  # status 7
-        vienna = Organization.objects.get(code="vienne-insoumise")  # created
-        self.assertEqual((vienna.country_code, vienna.voter_list.addresses.count()), ("AT", 1))
-
-        again = self.run_import()  # nothing added twice
-        self.assertIn("Nouvelles adresses : 0", again)
-        self.assertEqual(Address.all_objects.count(), 3)
-        self.assertEqual(Visit.objects.count(), 2)
-
-    def test_telegram_author_is_kept_and_linking_gives_the_visits(self):
+    def test_linking_telegram_gives_the_visits(self):
         import hashlib
         import hmac
         import time
@@ -471,16 +437,6 @@ class BotImportTests(TestCase):
         from django.test import Client, override_settings
 
         from accounts.models import User
-
-        self.run_import()
-        martin = Visit.objects.get(address__name="MARTIN")
-        self.assertEqual((martin.telegram_user_id, martin.user), (123, None))
-
-        # Visits imported before the Telegram id was kept: a new run fills it in, without duplicating them.
-        Visit.objects.update(telegram_user_id=None)
-        self.assertIn("auteur Telegram a été complété : 2", self.run_import())
-        self.assertEqual(Visit.objects.count(), 2)
-        self.assertEqual(Visit.objects.get(address__name="MARTIN").telegram_user_id, 123)
 
         token = "4242:secret"
         user = User.objects.create_user(email="t@demo.test", organization=self.berlin, is_approved=True)
@@ -502,27 +458,18 @@ class BotImportTests(TestCase):
             response = client.post("/api/auth/me/telegram/", signed(123), content_type="application/json")
             self.assertEqual(response.status_code, 200)
             self.assertEqual((response.json()["telegram_id"], response.json()["linked_visits"]), (123, 1))
-            self.assertEqual(Visit.objects.get(address__name="MARTIN").user, user)
+            self.assertEqual(Visit.objects.get(address=self.martin).user, user)
             # Once linked, no second link; and nobody else can take that Telegram account.
             self.assertEqual(client.post("/api/auth/me/telegram/", signed(124), content_type="application/json").status_code, 409)
             other = User.objects.create_user(email="o@demo.test", organization=self.berlin, is_approved=True)
             client.force_login(other)
             self.assertEqual(client.post("/api/auth/me/telegram/", signed(123), content_type="application/json").status_code, 409)
 
-    def test_dry_run_changes_nothing(self):
-        self.assertIn("SIMULATION", self.run_import("--dry-run"))
-        self.assertFalse(Address.all_objects.exists())
-        self.assertFalse(Organization.objects.filter(code="vienne-insoumise").exists())
-
     def test_new_election_starts_over_but_keeps_do_not_contact(self):
-        self.run_import()
-        dnc = Address.objects.get(name="LEROY")
-        dnc.status = Status.DO_NOT_CONTACT
-        dnc.save()
         presidential = Election.objects.create(name="Élection présidentielle 2027")
         self.assertEqual(election_service.set_current(presidential), 1)  # the promise of MARTIN
-        self.assertEqual(Address.objects.get(name="MARTIN").status, Status.TO_VISIT)
-        self.assertEqual(Address.objects.get(name="LEROY").status, Status.DO_NOT_CONTACT)
+        self.assertEqual(Address.objects.get(pk=self.martin.pk).status, Status.TO_VISIT)
+        self.assertEqual(Address.objects.get(pk=self.leroy.pk).status, Status.DO_NOT_CONTACT)
         self.assertEqual(Election.objects.filter(is_current=True).get(), presidential)
         self.assertEqual(election_service.phrase(presidential), "pour l'élection présidentielle 2027")
 
@@ -919,36 +866,3 @@ class LeaderboardElectionTests(TestCase):
         orgs = client.get("/api/stats/leaderboard/", {"scope": "organizations"}).json()
         self.assertEqual(next(r["doors"] for r in orgs["rows"] if r["id"] == organization.id), 1)
 
-
-class DedupeAddressesTests(TestCase):
-    def test_bot_rows_are_merged_into_the_lec_row_of_the_same_person(self):
-        from django.contrib.gis.geos import Point
-
-        voter_list = VoterList.objects.create(name="LEC dédoublonnage")
-        election = Election.objects.create(name="Élection dédoublonnage")
-        common = {"voter_list": voter_list, "zip_code": "10115", "city": "Berlin", "location": Point(13.4, 52.5)}
-        lec = Address.objects.create(
-            name="Müller", first_names="Marie Claire Anne", address="Torstraße 12", birth_year=1980,
-            source_address="Torstraße 12 | 10115 Berlin", **common,
-        )
-        homonym = Address.objects.create(
-            name="Martin", first_names="Paul", address="Torstraße 1", birth_year=1990, source_address="x", **common
-        )
-        Address.objects.create(name="Martin", first_names="Paul Louis", address="Kastanienallee 7", birth_year=1950, source_address="y", **common)
-        # From the bot: one first name only, no birth year, a promise of vote.
-        bot = Address.objects.create(name="MULLER", first_names="Marie", address="Torstr. 12", status=Status.COMMITMENT_TO_VOTE, **common)
-        Visit.objects.create(address=bot, result="commitment_to_vote", election=election)
-        bot_homonym = Address.objects.create(name="Martin", first_names="Paul", address="Torstrasse 1", **common)
-        unknown = Address.objects.create(name="Dupont", first_names="Jean", address="Rue 3", **common)
-
-        out = io.StringIO()
-        call_command("dedupe_addresses", stdout=out)  # simulation
-        self.assertTrue(Address.all_objects.filter(pk=bot.pk).exists())
-
-        call_command("dedupe_addresses", "--apply", stdout=out)
-        self.assertFalse(Address.all_objects.filter(pk__in=[bot.pk, bot_homonym.pk]).exists())
-        lec.refresh_from_db()
-        self.assertEqual((lec.first_names, lec.birth_year, lec.status), ("Marie Claire Anne", 1980, Status.COMMITMENT_TO_VOTE))
-        self.assertEqual(Visit.objects.get(election=election).address_id, lec.pk)
-        self.assertTrue(Address.all_objects.filter(pk=homonym.pk).exists())  # the street chose this Paul Martin
-        self.assertTrue(Address.all_objects.filter(pk=unknown.pk).exists())  # no LEC row: kept

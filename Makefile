@@ -52,7 +52,7 @@ exec		:
 			$(COMPOSE) $(FLAGS) $@ $(SERVICE) $(DSHELL)
 
 ################################################### DJANGO HELPERS #####################################################
-.PHONY: migrate makemigrations superuser shell seed import dedupe load-zensus load-social pack-areas
+.PHONY: migrate makemigrations superuser shell seed import load-zensus load-social pack-areas
 migrate		:
 			$(MANAGE) migrate
 makemigrations:
@@ -66,10 +66,6 @@ seed		:
 
 import		:
 			$(MANAGE) import_addresses $(FILE) $(if $(LIST),--list "$(LIST)",--organization $(ORG))
-
-# Merge the addresses imported from the Telegram bot into the LEC row of the same person (APPLY=1 to really do it)
-dedupe		:
-			$(MANAGE) dedupe_addresses $(if $(LIST),--list "$(LIST)",) $(if $(APPLY),--apply,)
 
 # Census grid (density, rent = social indicator of the German city packs): all of Germany, or BBOX=lon,lat,lon,lat
 load-zensus:

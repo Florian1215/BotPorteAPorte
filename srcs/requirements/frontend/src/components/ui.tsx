@@ -1,7 +1,7 @@
 import { Check, ChevronLeft, CircleAlert, CircleCheck, Info, LoaderCircle, LocateFixed, Minus, Plus, TriangleAlert, type LucideIcon } from "lucide-react";
 import { useCallback, useContext, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 
-import type { AbsentDetail, ResultValue } from "../api/types";
+import type { AbsentDetail, LatLon, ResultValue } from "../api/types";
 import { useBack } from "../context/BackContext";
 import { useMapUI } from "../context/MapContext";
 import { GeoContext } from "../hooks/useGeolocation";
@@ -245,8 +245,8 @@ export const inputClass =
 
 // --------------------------------------------------------------------------- map overlay
 
-/** Re-centers the map on the device position. */
-export function LocateButton({ className = "" }: { className?: string }) {
+/** Re-centers the map on the device position (and tells `onLocate`, e.g. to move a tour's start there). */
+export function LocateButton({ className = "", onLocate }: { className?: string; onLocate?: (here: LatLon) => void }) {
   const geo = useContext(GeoContext);
   const flyTo = useFlyTo();
   if (!geo) return null;
@@ -255,7 +255,11 @@ export function LocateButton({ className = "" }: { className?: string }) {
     <FloatingButton
       className={className}
       aria-label="Me localiser"
-      onClick={() => (geo.here ? flyTo([geo.here.lat, geo.here.lon], 16) : geo.retry())}
+      onClick={() => {
+        if (!geo.here) return geo.retry();
+        flyTo([geo.here.lat, geo.here.lon], 16);
+        onLocate?.(geo.here);
+      }}
     >
       {geo.status === "pending" ? (
         <Spinner className="size-5 text-sky-600" />
@@ -294,6 +298,7 @@ export function Sheet({
   children,
   footer,
   locate = true,
+  onLocate,
   back = true,
   above,
   half = false,
@@ -304,6 +309,8 @@ export function Sheet({
   children?: ReactNode;
   footer?: ReactNode;
   locate?: boolean;
+  /** Called with the device position when the locate button is tapped. */
+  onLocate?: (here: LatLon) => void;
   /** Show the screen's back button next to the title (when there is one). */
   back?: boolean;
   /** Floating content docked right above the sheet (e.g. a notification). */
@@ -472,7 +479,7 @@ export function Sheet({
           </div>
         </div>
         <div className="pointer-events-none absolute right-4 bottom-6 z-[1000] flex flex-col items-end gap-3">
-          {locate && <LocateButton />}
+          {locate && <LocateButton onLocate={onLocate} />}
           <ZoomButtons />
         </div>
       </>
@@ -489,7 +496,7 @@ export function Sheet({
       >
         {(locate || above) && (
           <div className="absolute inset-x-0 bottom-full flex flex-col gap-3 px-3 pb-3 sm:px-0">
-            {locate && <LocateButton className="self-end" />}
+            {locate && <LocateButton className="self-end" onLocate={onLocate} />}
             {above}
           </div>
         )}

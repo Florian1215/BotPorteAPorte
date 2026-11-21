@@ -1,7 +1,7 @@
 import type { Feature } from "geojson";
 import { Check, ChevronDown, ChevronRight, MapPinned, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { GeoJSON } from "react-leaflet";
+import { Circle, GeoJSON } from "react-leaflet";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { api, errorMessage } from "../api/client";
@@ -42,6 +42,17 @@ export default function PredefinedTour() {
   // Where the zones are searched around: the first known position (not refetched as the militant moves),
   // or nowhere (best zones of the whole organization) when the position is unavailable.
   const [origin, setOrigin] = useState<LatLon | null | undefined>(undefined);
+  // The militant tapped the map: zones are searched around that point instead of their position.
+  const [virtual, setVirtual] = useState(false);
+  const moveOrigin = (point: LatLon) => {
+    setOrigin(point);
+    setVirtual(true);
+  };
+  // The locate button brings the search back around the device position.
+  const backToMe = (position: LatLon) => {
+    setOrigin(position);
+    setVirtual(false);
+  };
   const [radius, setRadius] = useState(savedRadius);
   const pickRadius = (km: number) => {
     setRadius(km);
@@ -85,10 +96,17 @@ export default function PredefinedTour() {
 
   const select = (area: Area | null) => {
     setSelected(area);
-    setStart(area && here ? here : null);
+    // Start where the zones were searched from (the tapped point), otherwise the device position.
+    const from = virtual && origin ? origin : here;
+    setStart(area && from ? from : null);
   };
 
-  const allPoints = useMemo(() => (selected ? areaPoints(selected) : (areas ?? []).flatMap(areaPoints)), [areas, selected]);
+  // Show the search circle (or the chosen zone, or every zone when there is no position).
+  const allPoints = useMemo(
+    () => (selected ? areaPoints(selected) : origin ? circleBounds(origin, radius) : (areas ?? []).flatMap(areaPoints)),
+    [areas, selected, origin, radius],
+  );
+  const fitKey = selected ? `zone-${selected.id}` : origin ? `${origin.lat},${origin.lon}-${radius}` : `all-${areas?.length}`;
 
   const compute = async () => {
     if (!selected || !start) return;
@@ -110,8 +128,17 @@ export default function PredefinedTour() {
   return (
     <>
       <MapLayers>
-        <FitBounds points={allPoints} fitKey={`${radius}-${areas?.length}-${selected?.id}`} />
-        {selected && <MapClick onClick={setStart} />}
+        <FitBounds points={allPoints} fitKey={fitKey} />
+        <MapClick onClick={selected ? setStart : moveOrigin} />
+        {!selected && origin && (
+          <Circle
+            center={[origin.lat, origin.lon]}
+            radius={radius * 1000}
+            interactive={false}
+            pathOptions={{ color: "#18181b", weight: 2, opacity: 0.6, dashArray: "6 8", fill: false }}
+          />
+        )}
+        {!selected && origin && virtual && <PinMarker point={origin} color="#18181b" label="Recherche ici" kind="center" />}
         {(areas ?? []).map((area) => (
           <GeoJSON
             key={`${area.id}-${selected?.id === area.id}-${!!selected}`}
@@ -123,6 +150,8 @@ export default function PredefinedTour() {
               opacity: selected && selected.id !== area.id ? 0.3 : 1,
             }}
             interactive={!selected}
+            // Tapping a zone selects it: it must not also move the search point.
+            bubblingMouseEvents={false}
             eventHandlers={{ click: () => !selected && area.n_to_visit > 0 && select(area) }}
           />
         ))}
@@ -133,13 +162,7 @@ export default function PredefinedTour() {
         <Sheet
           half
           title="Tournée préparée"
-          subtitle={
-            origin === undefined
-              ? undefined
-              : origin
-                ? "Les 10 meilleures zones autour de toi"
-                : "Les 10 meilleures zones (position indisponible)"
-          }
+          onLocate={backToMe}
           action={origin && <RadiusPicker value={radius} onChange={pickRadius} />}
         >
           {origin === undefined && <LocationStatus geo={geo} onRetry={geo.retry} />}
@@ -182,6 +205,7 @@ export default function PredefinedTour() {
           <Sheet
             title={selected.name}
             subtitle="Touche la carte pour changer le départ"
+            onLocate={setStart}
             footer={
               <Button className="w-full" icon={Sparkles} disabled={!start} loading={loading} onClick={compute}>
                 Calculer
@@ -199,6 +223,16 @@ export default function PredefinedTour() {
       )}
     </>
   );
+}
+
+/** Corners of the box around the search circle (to fit the map on it). */
+function circleBounds(center: LatLon, km: number): [number, number][] {
+  const dLat = km / 111.32;
+  const dLon = km / (111.32 * Math.cos((center.lat * Math.PI) / 180));
+  return [
+    [center.lat - dLat, center.lon - dLon],
+    [center.lat + dLat, center.lon + dLon],
+  ];
 }
 
 /** Score, French voters (done / total once some were) and addresses free for a tour. */

@@ -129,6 +129,7 @@ export default function FreeTour() {
       <Sheet
         title="Tournée libre"
         subtitle={prompt}
+        onLocate={(position) => step === "start" && setStart(position)}
         footer={
           <div className="grid grid-cols-2 gap-2">
             {step === "start" ? (

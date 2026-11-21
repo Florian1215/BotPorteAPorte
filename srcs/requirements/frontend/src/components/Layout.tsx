@@ -6,6 +6,7 @@ import { useAuth } from "../context/AuthContext";
 import { BackContext } from "../context/BackContext";
 import { useMapUI } from "../context/MapContext";
 import { GeoContext, lastKnownPosition, useGeolocation } from "../hooks/useGeolocation";
+import { useIsDesktop } from "../hooks/useIsDesktop";
 import { usePendingCount } from "../hooks/usePendingCount";
 import { ROLE_LABEL } from "../lib/constants";
 import { MapLayers, UserPosition } from "./map";
@@ -29,6 +30,7 @@ export default function Layout() {
   const isHome = pathname === "/";
   const pending = usePendingCount();
   const goBack = () => (key === "default" ? navigate("/") : navigate(-1));
+  const desktop = useIsDesktop();
 
   useEffect(() => setMenuOpen(false), [pathname]);
 
@@ -55,7 +57,8 @@ export default function Layout() {
         <UserPosition position={geo.position} />
       </MapLayers>
 
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-[1100] flex items-center gap-2 px-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+      {/* Mobile: floating top bar + drawer. Large screens: permanent side menu instead. */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-[1100] flex items-center gap-2 px-3 pt-[max(0.75rem,env(safe-area-inset-top))] lg:hidden">
         <FloatingButton aria-label="Menu" onClick={() => setMenuOpen(true)} className="relative">
           <Menu className="size-[22px]" strokeWidth={2.25} />
           {pending > 0 && <span className="absolute top-2.5 right-2.5 size-2.5 rounded-full bg-brand-600 ring-2 ring-white" />}
@@ -70,16 +73,37 @@ export default function Layout() {
       </div>
 
       {/* Back button lives in the sheet header (next to the title), not in the top bar. */}
+      {desktop && (
+        <aside className="absolute inset-y-0 left-0 z-[1100] flex w-64 flex-col border-r border-zinc-950/5 bg-white shadow-float">
+          <NavContent pending={pending} />
+        </aside>
+      )}
+
       <BackContext.Provider value={isHome ? null : goBack}>
-        <Outlet />
+        {/* --sidebar: the panels dock right of the side menu on large screens. */}
+        <div className="contents lg:[--sidebar:16rem]">
+          <Outlet />
+        </div>
       </BackContext.Provider>
 
-      {menuOpen && <Drawer onClose={() => setMenuOpen(false)} pending={pending} />}
+      {menuOpen && !desktop && <Drawer onClose={() => setMenuOpen(false)} pending={pending} />}
     </GeoContext.Provider>
   );
 }
 
 function Drawer({ onClose, pending }: { onClose: () => void; pending: number }) {
+  return (
+    <div className="fixed inset-0 z-[1200] flex" role="dialog" aria-modal>
+      <nav className="flex h-full w-[19rem] max-w-[85vw] animate-[slide-in_.22s_cubic-bezier(.2,.8,.2,1)] flex-col bg-white shadow-2xl">
+        <NavContent pending={pending} onClose={onClose} />
+      </nav>
+      <button className="flex-1 animate-[fade-in_.2s_ease-out] bg-zinc-950/40 backdrop-blur-[2px]" aria-label="Fermer le menu" onClick={onClose} />
+    </div>
+  );
+}
+
+/** Menu content: in the mobile drawer (with a close button) or the permanent side menu of large screens. */
+function NavContent({ pending, onClose }: { pending: number; onClose?: () => void }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -98,17 +122,18 @@ function Drawer({ onClose, pending }: { onClose: () => void; pending: number }) 
   const initials = (user?.first_name || user?.email || "?").trim().charAt(0).toUpperCase();
 
   return (
-    <div className="fixed inset-0 z-[1200] flex" role="dialog" aria-modal>
-      <nav className="flex h-full w-[19rem] max-w-[85vw] animate-[slide-in_.22s_cubic-bezier(.2,.8,.2,1)] flex-col bg-white shadow-2xl">
+    <>
         <div className="px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-3">
           <div className="flex items-center justify-between">
             <OrgLogo organization={user?.organization ?? null} className="size-11 text-lg" />
-            <button onClick={onClose} aria-label="Fermer le menu" className="flex size-10 items-center justify-center rounded-full text-zinc-500 active:bg-zinc-100">
-              <X className="size-5" />
-            </button>
+            {onClose && (
+              <button onClick={onClose} aria-label="Fermer le menu" className="flex size-10 items-center justify-center rounded-full text-zinc-500 active:bg-zinc-100">
+                <X className="size-5" />
+              </button>
+            )}
           </div>
           <p className="mt-3 truncate text-[15px] font-semibold tracking-tight">{user?.organization?.name ?? "Aucune organisation"}</p>
-          <Link to="/account" onClick={onClose} className="mt-3 flex items-center gap-3 rounded-2xl bg-zinc-50 p-2.5 ring-1 ring-zinc-950/5 active:bg-zinc-100">
+          <Link to="/account" onClick={onClose} className="mt-3 flex items-center gap-3 rounded-2xl bg-zinc-50 p-2.5 ring-1 ring-zinc-950/5 hover:bg-zinc-100 active:bg-zinc-100">
             <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-sm font-semibold text-white">{initials}</span>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold">{[user?.first_name, user?.last_name].filter(Boolean).join(" ") || user?.email}</p>
@@ -135,22 +160,20 @@ function Drawer({ onClose, pending }: { onClose: () => void; pending: number }) 
         <div className="border-t border-zinc-950/5 px-2 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <button
             onClick={() => logout().then(() => navigate("/login"))}
-            className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-[15px] font-medium text-zinc-600 active:bg-zinc-100"
+            className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-[15px] font-medium text-zinc-600 hover:bg-zinc-100 active:bg-zinc-100"
           >
             <LogOut className="size-5" />
             Déconnexion
           </button>
         </div>
-      </nav>
-      <button className="flex-1 animate-[fade-in_.2s_ease-out] bg-zinc-950/40 backdrop-blur-[2px]" aria-label="Fermer le menu" onClick={onClose} />
-    </div>
+    </>
   );
 }
 
-function MenuLink({ item, active, onClick }: { item: MenuItem; active: boolean; onClick: () => void }) {
+function MenuLink({ item, active, onClick }: { item: MenuItem; active: boolean; onClick?: () => void }) {
   const { to, icon: Icon, label, badge = 0, external } = item;
   const className = `flex items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-medium transition ${
-    active ? "bg-brand-50 text-brand-700" : "text-zinc-700 active:bg-zinc-100"
+    active ? "bg-brand-50 text-brand-700" : "text-zinc-700 hover:bg-zinc-100 active:bg-zinc-100"
   }`;
   const content = (
     <>

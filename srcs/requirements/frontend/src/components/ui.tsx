@@ -1,10 +1,11 @@
-import { Check, ChevronLeft, CircleAlert, CircleCheck, Info, LoaderCircle, LocateFixed, TriangleAlert, type LucideIcon } from "lucide-react";
+import { Check, ChevronLeft, CircleAlert, CircleCheck, Info, LoaderCircle, LocateFixed, Minus, Plus, TriangleAlert, type LucideIcon } from "lucide-react";
 import { useCallback, useContext, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 
 import type { AbsentDetail, ResultValue } from "../api/types";
 import { useBack } from "../context/BackContext";
 import { useMapUI } from "../context/MapContext";
 import { GeoContext } from "../hooks/useGeolocation";
+import { useIsDesktop } from "../hooks/useIsDesktop";
 import { ABSENT_DETAILS, RESULTS } from "../lib/constants";
 import { useFlyTo } from "./map";
 
@@ -55,7 +56,7 @@ export function FloatingButton({ className = "", children, ...props }: ButtonHTM
   return (
     <button
       {...props}
-      className={`pointer-events-auto flex size-12 items-center justify-center rounded-full bg-white/90 text-zinc-800 shadow-float ring-1 ring-zinc-950/5 backdrop-blur-xl transition active:scale-95 ${className}`}
+      className={`pointer-events-auto flex size-12 items-center justify-center rounded-full bg-white/90 text-zinc-800 shadow-float ring-1 ring-zinc-950/5 backdrop-blur-xl transition hover:bg-white active:scale-95 ${className}`}
     >
       {children}
     </button>
@@ -265,6 +266,23 @@ export function LocateButton({ className = "" }: { className?: string }) {
   );
 }
 
+/** Large screens: zoom in / out (no pinch with a mouse). */
+function ZoomButtons() {
+  const { map } = useMapUI();
+  if (!map) return null;
+  return (
+    <div className="pointer-events-auto flex flex-col overflow-hidden rounded-full bg-white/90 shadow-float ring-1 ring-zinc-950/5 backdrop-blur-xl">
+      <button aria-label="Zoomer" onClick={() => map.zoomIn()} className="flex size-12 items-center justify-center text-zinc-800 hover:bg-white">
+        <Plus className="size-5" strokeWidth={2.25} />
+      </button>
+      <span className="mx-3 h-px bg-zinc-950/10" />
+      <button aria-label="Dézoomer" onClick={() => map.zoomOut()} className="flex size-12 items-center justify-center text-zinc-800 hover:bg-white">
+        <Minus className="size-5" strokeWidth={2.25} />
+      </button>
+    </div>
+  );
+}
+
 /**
  * Bottom sheet docked over the background map (the mobile layout of every screen).
  * Swipe down / tap the handle to collapse it and see the map, swipe up to expand.
@@ -293,7 +311,8 @@ export function Sheet({
   /** At most half the screen high (the body scrolls), so the map stays visible. */
   half?: boolean;
 }) {
-  const { sheetHeight, sheetChanged } = useMapUI();
+  const { sheetHeight, sheetLeft, sheetChanged } = useMapUI();
+  const desktop = useIsDesktop();
   const goBack = useBack();
   const showBack = back && goBack !== null;
   const ref = useRef<HTMLDivElement>(null);
@@ -319,11 +338,29 @@ export function Sheet({
     contentObserver.current.observe(el);
   }, []);
 
-  const offset = drag ?? (collapsed ? hideBy : 0);
+  const offset = desktop ? 0 : drag ?? (collapsed ? hideBy : 0);
 
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
+    if (desktop) {
+      // Side panel: the map keeps what is right of it free.
+      const update = () => {
+        const right = panel.current?.getBoundingClientRect().right ?? 0;
+        if (right !== sheetLeft.current || sheetHeight.current !== 0) {
+          sheetLeft.current = right;
+          sheetHeight.current = 0;
+          sheetChanged();
+        }
+      };
+      update();
+      const observer = new ResizeObserver(update);
+      observer.observe(document.body);
+      return () => {
+        observer.disconnect();
+        sheetLeft.current = 0;
+      };
+    }
     const update = () => {
       const max = panel.current && header.current ? Math.max(0, panel.current.offsetHeight - header.current.offsetHeight) : 0;
       setHideBy(max);
@@ -342,7 +379,7 @@ export function Sheet({
       observer.disconnect();
       sheetHeight.current = 0;
     };
-  }, [sheetHeight, sheetChanged, collapsed]);
+  }, [sheetHeight, sheetLeft, sheetChanged, collapsed, desktop]);
 
   // Drag the sheet by its header: it follows the finger, then settles open or collapsed
   // (by position, or by a quick flick). A simple tap on the handle still toggles it.
@@ -391,6 +428,53 @@ export function Sheet({
       }
     },
   };
+
+  if (desktop)
+    return (
+      <>
+        {/* Side panel, right of the side menu (--sidebar, set by the signed-in layout). */}
+        <div
+          ref={ref}
+          className="pointer-events-none absolute top-4 bottom-4 left-[calc(var(--sidebar,0px)+1rem)] z-[1000] flex w-[27rem] flex-col gap-3"
+        >
+          {above}
+          <div
+            ref={panel}
+            className="pointer-events-auto flex min-h-0 animate-[fade-in_.2s_ease-out] flex-col rounded-3xl bg-white shadow-float ring-1 ring-zinc-950/5"
+          >
+            {(title || action) && (
+              <div className="flex shrink-0 items-start gap-3 px-6 pt-5 pb-4">
+                {showBack && (
+                  <button
+                    type="button"
+                    onClick={goBack}
+                    aria-label="Retour"
+                    className="-mt-1 -ml-2.5 flex size-9 shrink-0 items-center justify-center rounded-full text-zinc-700 hover:bg-zinc-100"
+                  >
+                    <ChevronLeft className="size-6" strokeWidth={2.25} />
+                  </button>
+                )}
+                <div className="min-w-0 flex-1">
+                  {title && <h1 className="text-xl leading-tight font-semibold tracking-[-0.02em] text-zinc-950">{title}</h1>}
+                  {subtitle && <div className="mt-1 text-sm leading-snug text-zinc-500">{subtitle}</div>}
+                </div>
+                {action && <div className="shrink-0">{action}</div>}
+              </div>
+            )}
+            {children && (
+              <div className="min-h-0 shrink overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
+                <div className={`space-y-3 px-6 pb-5 ${title || action ? "pt-0.5" : "pt-5"}`}>{children}</div>
+              </div>
+            )}
+            {footer && <div className="shrink-0 border-t border-zinc-950/5 px-6 py-4">{footer}</div>}
+          </div>
+        </div>
+        <div className="pointer-events-none absolute right-4 bottom-6 z-[1000] flex flex-col items-end gap-3">
+          {locate && <LocateButton />}
+          <ZoomButtons />
+        </div>
+      </>
+    );
 
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[1000] flex justify-center sm:px-4 sm:pb-4">

@@ -173,3 +173,10 @@ body {
   font-weight: 600;
   color: #52525b;
 }
+
+/* Large screens: no floating top bar over the map. */
+@media (min-width: 1024px) {
+  .leaflet-top {
+    top: 0.5rem;
+  }
+}

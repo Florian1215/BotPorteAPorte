@@ -7,10 +7,16 @@ import { api } from "../api/client";
 import type { LatLon } from "../api/types";
 import { MapUIContext, useMapUI } from "../context/MapContext";
 import { lastKnownPosition } from "../hooks/useGeolocation";
+import { isDesktop } from "../hooks/useIsDesktop";
 import { DEFAULT_CENTER } from "../lib/constants";
 
 /** Height reserved for the floating top bar. */
 const TOP_BAR_PX = 72;
+
+/** Space hidden at the top of the map (no floating top bar on large screens). */
+function topInset() {
+  return isDesktop() ? 16 : TOP_BAR_PX;
+}
 
 type TileConfig = { tile_url: string; attribution: string; provider?: string; fallback?: TileConfig | null };
 
@@ -58,6 +64,7 @@ export function MapShell({ children }: { children: ReactNode }) {
   const [map, setMap] = useState<L.Map | null>(null);
   const { tiles, onTileLoad, onTileError } = useTileConfig();
   const sheetHeight = useRef(0);
+  const sheetLeft = useRef(0);
   const focus = useRef<{ point: [number, number]; zoom: number } | null>(null);
   const flying = useRef(false);
   const recenterTimer = useRef<number | undefined>(undefined);
@@ -71,7 +78,7 @@ export function MapShell({ children }: { children: ReactNode }) {
     recenterTimer.current = window.setTimeout(() => {
       const f = focus.current;
       if (!f) return;
-      const target = visibleCenter(map, f.point, f.zoom, sheetHeight.current ?? 0);
+      const target = visibleCenter(map, f.point, f.zoom, sheetHeight.current ?? 0, sheetLeft.current ?? 0);
       const shift = map.project(target, f.zoom).subtract(map.project(map.getCenter(), f.zoom));
       if (map.getZoom() === f.zoom && Math.abs(shift.x) < 2 && Math.abs(shift.y) < 2) return;
       flying.current = true;
@@ -102,7 +109,7 @@ export function MapShell({ children }: { children: ReactNode }) {
     };
   }, [map]);
 
-  const ui = useMemo(() => ({ map, sheetHeight, focus, flying, sheetChanged }), [map, sheetChanged]);
+  const ui = useMemo(() => ({ map, sheetHeight, sheetLeft, focus, flying, sheetChanged }), [map, sheetChanged]);
 
   return (
     <MapUIContext.Provider value={ui}>
@@ -142,27 +149,28 @@ export function MapLayers({ children }: { children: ReactNode }) {
   return <LeafletContext.Provider value={ctx}>{children}</LeafletContext.Provider>;
 }
 
-/** Center of the part of the map that is not hidden by the top bar and the bottom sheet. */
-function visibleCenter(map: L.Map, target: L.LatLngExpression, zoom: number, sheetHeight: number): L.LatLng {
-  const offsetY = (sheetHeight - TOP_BAR_PX) / 2;
-  return map.unproject(map.project(target, zoom).add([0, offsetY]), zoom);
+/** Center of the part of the map that is not hidden by the top bar and the sheet (bottom, or left on large screens). */
+function visibleCenter(map: L.Map, target: L.LatLngExpression, zoom: number, sheetHeight: number, sheetLeft: number): L.LatLng {
+  const offsetY = (sheetHeight - topInset()) / 2;
+  const offsetX = -sheetLeft / 2;
+  return map.unproject(map.project(target, zoom).add([offsetX, offsetY]), zoom);
 }
 
 export function useFlyTo() {
-  const { map, sheetHeight, focus, flying } = useMapUI();
+  const { map, sheetHeight, sheetLeft, focus, flying } = useMapUI();
   return (point: [number, number], zoom?: number) => {
     if (!map) return;
     const z = zoom ?? Math.max(map.getZoom(), 16);
     focus.current = { point, zoom: z };
     flying.current = true;
-    map.flyTo(visibleCenter(map, point, z, sheetHeight.current ?? 0), z, { duration: 0.6 });
+    map.flyTo(visibleCenter(map, point, z, sheetHeight.current ?? 0, sheetLeft.current ?? 0), z, { duration: 0.6 });
   };
 }
 
 /** Fit the view to the given points (above the sheet) whenever `fitKey` changes. */
 export function FitBounds({ points, fitKey, maxZoom = 17 }: { points: [number, number][]; fitKey: string; maxZoom?: number }) {
   const map = useMap();
-  const { sheetHeight, focus, flying } = useMapUI();
+  const { sheetHeight, sheetLeft, focus, flying } = useMapUI();
   const flyTo = useFlyTo();
   useEffect(() => {
     if (points.length === 0) return;
@@ -173,7 +181,8 @@ export function FitBounds({ points, fitKey, maxZoom = 17 }: { points: [number, n
     focus.current = null; // a set of points, not one point to keep centered
     flying.current = true;
     map.flyToBounds(L.latLngBounds(points), {
-      paddingTopLeft: [24, TOP_BAR_PX + 8],
+      // Never reserve more than 70 % of the width for the side panel either.
+      paddingTopLeft: [24 + Math.min(sheetLeft.current ?? 0, map.getSize().x * 0.7), topInset() + 8],
       // A tall sheet on a short screen would leave a sliver of map: never reserve more than 60 % of it.
       paddingBottomRight: [24, Math.min((sheetHeight.current ?? 0) + 16, map.getSize().y * 0.6)],
       maxZoom,

@@ -19,7 +19,7 @@ export default function AuthShell({
 }) {
   return (
     <>
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex justify-center px-4 pt-[max(1rem,env(safe-area-inset-top))]">
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex justify-center px-4 pt-[max(1rem,env(safe-area-inset-top))] lg:justify-end lg:px-6">
         <div className="flex h-12 items-center gap-2.5 rounded-full bg-white/90 py-1.5 pr-5 pl-1.5 text-sm font-semibold tracking-tight shadow-float ring-1 ring-zinc-950/5 backdrop-blur-xl">
           {organization ? (
             <>

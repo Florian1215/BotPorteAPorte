@@ -712,9 +712,6 @@ function ImportSheet({
         </>
       )}
       <SectionTitle>{mine.length > 0 ? "Autres villes" : "Packs des villes"}</SectionTitle>
-      <p className="-mt-1 text-xs text-zinc-500">
-        Un clic : la carte et les résultats officiels sont téléchargés, puis les scores calculés.
-      </p>
       {others.map(packButton)}
 
     </Sheet>

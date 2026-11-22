@@ -1,9 +1,10 @@
-"""Emails sent by the site: login code (+ link) and invitation of a member added beforehand."""
+"""Emails sent by the site: login code (+ link), invitation of a member added beforehand, sign-up request / approval."""
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
+from django.db.models import Q
 from django.utils.html import escape
 
-from .models import Organization
+from .models import Organization, Role, User
 
 BRAND = "#d1271c"
 
@@ -124,3 +125,58 @@ def send_email_changed_notice(request, old_email: str, new_email: str) -> None:
     message = EmailMultiAlternatives(subject, text, settings.DEFAULT_FROM_EMAIL, [old_email])
     message.attach_alternative(html, "text/html")
     message.send()
+
+
+def _send(subject: str, text: str, html: str, to: str) -> None:
+    message = EmailMultiAlternatives(subject, text, settings.DEFAULT_FROM_EMAIL, [to])
+    message.attach_alternative(html, "text/html")
+    message.send()
+
+
+def sign_up_reviewers(organization: Organization):
+    """Who is told about a new sign-up: the responsables of the organization, else the site admins."""
+    active = User.objects.filter(is_active=True)
+    managers = active.filter(organization=organization, role=Role.MANAGER, is_approved=True, suspended_at__isnull=True)
+    if managers.exists():
+        return managers
+    return active.filter(Q(is_superuser=True) | Q(role=Role.ADMIN))
+
+
+def send_sign_up_request(request, member, organization: Organization) -> None:
+    """Tell the responsables of `organization` that `member` asks to join (one email each, recipients not shared)."""
+    link = f"{site_url(request)}/members"
+    subject = f"Nouvelle demande d'accès à {organization.name} : {member.email}"
+    text = (
+        f"{member.email} demande à rejoindre {organization.name} pour faire du porte-à-porte.\n\n"
+        f"Acceptes-tu cette demande ? Valide-la ou refuse-la ici :\n{link}"
+    )
+    body = f"""<p style="margin:0;font-size:15px;line-height:1.5"><strong>{escape(member.email)}</strong> demande à rejoindre
+          <strong>{escape(organization.name)}</strong> pour faire du porte-à-porte.</p>
+          <p style="margin:12px 0 0;font-size:15px;line-height:1.5">Acceptes-tu cette demande ?</p>"""
+    html = _layout(
+        "Nouvelle demande d'accès",
+        body,
+        "Valider ou refuser",
+        link,
+        f"Tu reçois cet email parce que tu es responsable de {escape(organization.name)}.",
+    )
+    for reviewer in sign_up_reviewers(organization).exclude(pk=member.pk):
+        try:
+            _send(subject, text, html, reviewer.email)
+        except Exception:
+            pass  # the request is listed on the site anyway
+
+
+def send_account_approved(request, member) -> None:
+    organization = member.organization
+    where = f" à {organization.name}" if organization else ""
+    link = f"{site_url(request)}/login"
+    subject = "C'est bon, ton compte est validé !"
+    text = (
+        f"Ta demande pour rejoindre{where} a été acceptée : tu as maintenant accès au porte-à-porte.\n\n"
+        f"Connecte-toi ici :\n{link}"
+    )
+    body = f"""<p style="margin:0;font-size:15px;line-height:1.5">Ta demande pour rejoindre{escape(where)} a été acceptée :
+          tu as maintenant accès au porte-à-porte. Bonne tournée !</p>"""
+    html = _layout("Ton compte est validé", body, "Me connecter", link, "Tu reçois cet email parce que tu as demandé à rejoindre un groupe d'action.")
+    _send(subject, text, html, member.email)

@@ -24,7 +24,7 @@ from rest_framework.views import APIView
 from canvassing.models import Address, AddressImport
 from canvassing.services import address_import
 
-from .emails import send_invitation
+from .emails import send_account_approved, send_invitation
 from .images import InvalidImage, process_logo
 from .models import ROLE_RANK, LoginCode, Organization, Role, User, VoterList
 from .permissions import CanValidate, IsSiteAdmin
@@ -63,6 +63,13 @@ def managed_organization(request, code: str) -> Organization:
 
 
 # --------------------------------------------------------------------------- members
+
+
+def notify_approved(request, member: User) -> None:
+    try:
+        send_account_approved(request, member)
+    except Exception:
+        pass  # the account is approved anyway
 
 
 class MemberListView(APIView):
@@ -123,6 +130,7 @@ class MemberListView(APIView):
             member.first_name = member.first_name or data["first_name"]
             member.last_name = member.last_name or data["last_name"]
             member.save()
+            notify_approved(request, member)
             return Response(MemberSerializer(member).data)
 
         member = User.objects.create_user(
@@ -181,6 +189,8 @@ class MemberDetailView(APIView):
             member.suspended_at = None if data["is_approved"] else (member.suspended_at or timezone.now())
             data = {**data, "suspended_at": member.suspended_at}
         member.save(update_fields=list(data) or None)
+        if approving:
+            notify_approved(request, member)
         return Response(MemberSerializer(member).data)
 
     def delete(self, request, pk):

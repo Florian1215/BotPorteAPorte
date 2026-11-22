@@ -16,7 +16,7 @@ from rest_framework.views import APIView
 
 from config.settings import DEBUG
 from . import telegram
-from .emails import send_email_change_code, send_email_changed_notice, send_login_code
+from .emails import send_email_change_code, send_email_changed_notice, send_login_code, send_sign_up_request
 from .models import LoginCode, Organization, User
 from .serializers import (
     EmailChangeCodeSerializer,
@@ -59,8 +59,10 @@ def complete_login(request, login_code: LoginCode) -> Response:
         return error(refusal, status.HTTP_403_FORBIDDEN)
 
     user = User.objects.filter(email=email).first()
+    new_sign_up = False
     if user is None:
         user = User.objects.create_user(email, organization=organization, is_approved=False)
+        new_sign_up = True
     elif user.is_site_admin:
         # Site admins can work in any organization: the one picked at login becomes their current one.
         if organization and user.organization_id != organization.id:
@@ -71,7 +73,10 @@ def complete_login(request, login_code: LoginCode) -> Response:
         user.is_approved = False
         user.suspended_at = None  # a new organization: a new sign-up to validate there
         user.save(update_fields=["organization", "is_approved", "suspended_at"])
+        new_sign_up = True
 
+    if new_sign_up:
+        send_sign_up_request(request, user, organization)
     login(request, user, backend="django.contrib.auth.backends.ModelBackend")
     return Response(MeSerializer(user).data)
 

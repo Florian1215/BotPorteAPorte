@@ -65,6 +65,9 @@ class Organization(models.Model):
     # Social indicator of the zones (share of low-income residents, poverty rate, median income…).
     social_label = models.CharField("indicateur social", max_length=128, blank=True, default="Bas revenus")
     social_higher_is_poorer = models.BooleanField("plus haut = plus pauvre", default=True)
+    # Social indicator uploaded from the zones (`canvassing/services/social.py`): file, description and the value
+    # of each district by code, applied again when the pack is re-imported.
+    social_upload = models.JSONField("indicateur social importé", default=dict, blank=True, editable=False)
     logo = models.BinaryField(null=True, blank=True, editable=False)
     logo_content_type = models.CharField(max_length=32, blank=True, default="", editable=False)
     logo_updated_at = models.DateTimeField(null=True, blank=True, editable=False)

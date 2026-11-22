@@ -194,6 +194,23 @@ export type ProgressElections = {
   progress_election: string | null;
 };
 
+export type SocialUpload = {
+  filename: string;
+  /** What the figure is, as written in the file ("indicateur"). */
+  indicator: string;
+  date: string;
+  uploaded_at: string;
+  n_values: number;
+};
+
+export type SocialImportReport = {
+  n_districts: number;
+  n_with_social: number;
+  n_in_file: number;
+  indicator: string;
+  date: string;
+};
+
 export type DistrictMap = ProgressElections & {
   /** Reference election of the score (votes), not the canvassing campaign. */
   election: string;
@@ -202,6 +219,8 @@ export type DistrictMap = ProgressElections & {
   weights: ScoreWeights;
   criteria: { key: ScoreCriterionKey; label: string }[];
   import: DistrictImport | null;
+  /** Social indicator uploaded by the responsables (kept when the pack is re-imported), null when none. */
+  social_upload: SocialUpload | null;
   /** One-click imports of the cities with official open data, the organization's city first. */
   packs: CityPack[];
 } & ReferenceParty;

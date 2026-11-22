@@ -15,6 +15,7 @@ urlpatterns = [
     path("manage/districts/", views.ManageDistrictListView.as_view()),
     path("manage/districts/<int:pk>/", views.ManageDistrictDetailView.as_view()),
     path("manage/districts/import/", views.DistrictImportView.as_view()),
+    path("manage/districts/social/", views.SocialIndicatorView.as_view()),
     path("manage/score-weights/", views.ScoreWeightsView.as_view()),
     path("site/elections/", views.SiteElectionListView.as_view()),
     path("site/elections/<int:pk>/", views.SiteElectionDetailView.as_view()),

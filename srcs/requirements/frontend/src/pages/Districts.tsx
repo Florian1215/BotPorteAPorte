@@ -1,7 +1,7 @@
 import type { FeatureCollection } from "geojson";
 import L from "leaflet";
-import { ChevronRight, LandPlot, RefreshCw, SlidersHorizontal, Sparkles } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronRight, HandCoins, LandPlot, SlidersHorizontal, Sparkles, Upload } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Marker, useMap, useMapEvents } from "react-leaflet";
 import { useNavigate } from "react-router-dom";
 
@@ -12,6 +12,7 @@ import type {
   DistrictMap,
   CityPack,
   ScoreCriterionKey,
+  SocialImportReport,
   ScoreWeights,
 } from "../api/types";
 import { FitBounds, FlyTo, MapLayers } from "../components/map";
@@ -110,7 +111,14 @@ export default function Districts() {
       </BackContext.Provider>
     );
   } else if (empty || panel === "import" || running) {
-    sheet = <ImportSheet data={data} onStarted={load} onCancel={empty ? undefined : () => setPanel("overview")} />;
+    // With zones, the back button of the sheet returns to the overview (without, there is nothing to go back to).
+    sheet = empty ? (
+      <ImportSheet data={data} onStarted={load} />
+    ) : (
+      <BackContext.Provider value={() => setPanel("overview")}>
+        <ImportSheet data={data} onStarted={load} />
+      </BackContext.Provider>
+    );
   } else if (panel === "weights") {
     sheet = (
       <WeightsSheet
@@ -374,8 +382,8 @@ function OverviewSheet({
         <Button variant="secondary" size="sm" icon={SlidersHorizontal} onClick={() => onPanel("weights")}>
           Pondération
         </Button>
-        <Button variant="secondary" size="sm" icon={RefreshCw} onClick={() => onPanel("import")}>
-          Réimporter
+        <Button variant="secondary" size="sm" icon={Upload} onClick={() => onPanel("import")}>
+          Importer
         </Button>
       </div>
 
@@ -624,24 +632,36 @@ function WeightsSheet({ data, onDone }: { data: DistrictMap; onDone: (changed: b
 
 const FLAGS: Record<string, string> = { DE: "🇩🇪", AT: "🇦🇹", CZ: "🇨🇿", PL: "🇵🇱", RO: "🇷🇴" };
 
-function ImportSheet({
-  data,
-  onStarted,
-  onCancel,
-}: {
-  data: DistrictMap;
-  onStarted: () => void;
-  onCancel?: () => void;
-}) {
+function ImportSheet({ data, onStarted }: { data: DistrictMap; onStarted: () => void }) {
   const job = data.import;
+  const hasZones = data.districts.length > 0;
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [socialReport, setSocialReport] = useState<SocialImportReport | null>(null);
+  const socialInput = useRef<HTMLInputElement>(null);
 
   const run = async (key: string, body: Record<string, unknown>) => {
     setBusy(key);
     setError(null);
+    setSocialReport(null);
     try {
       await api("/manage/districts/import/", { method: "POST", body });
+      onStarted();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const uploadSocial = async (file: File) => {
+    setBusy("social");
+    setError(null);
+    setSocialReport(null);
+    const body = new FormData();
+    body.append("file", file);
+    try {
+      setSocialReport(await api<SocialImportReport>("/manage/districts/social/", { method: "POST", body }));
       onStarted();
     } catch (e) {
       setError(errorMessage(e));
@@ -662,48 +682,66 @@ function ImportSheet({
 
   const [mine, others] = [data.packs.filter((p) => p.recommended), data.packs.filter((p) => !p.recommended)];
   const packButton = (pack: CityPack) => (
-    <button
+    <ImportRow
       key={pack.key}
       onClick={() => run(pack.key, { pack: pack.key })}
       disabled={busy !== null}
-      className={`flex w-full items-center gap-3 rounded-2xl bg-white p-3.5 text-left ring-1 active:bg-zinc-50 disabled:opacity-60 ${
-        pack.recommended ? "ring-2 ring-brand-500" : "ring-zinc-950/[0.08]"
-      }`}
-    >
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-lg">
-        {busy === pack.key ? <Spinner className="size-5 text-brand-700" /> : FLAGS[pack.country] ?? <LandPlot className="size-5 text-brand-700" />}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="flex flex-wrap items-baseline gap-x-2">
-          <span className="font-semibold tracking-tight">{pack.city}</span>
-          <span className="text-xs text-zinc-500">{pack.election}</span>
-        </span>
-        <span className="block text-xs text-zinc-500">{pack.description}</span>
-      </span>
-      <ChevronRight className="size-5 shrink-0 text-zinc-300" />
-    </button>
+      highlighted={pack.recommended}
+      icon={busy === pack.key ? <Spinner className="size-5 text-brand-700" /> : FLAGS[pack.country] ?? <LandPlot className="size-5 text-brand-700" />}
+      title={pack.city}
+      meta={pack.election}
+      description={pack.description}
+    />
   );
+  const social = data.social_upload;
 
   return (
-    <Sheet
-      title="Importer les zones"
-      locate={false}
-      action={
-        onCancel && (
-          <Button variant="secondary" size="sm" onClick={onCancel}>
-            Retour
-          </Button>
-        )
-      }
-    >
+    <Sheet title="Importer" locate={false}>
       {job?.status === "failed" && <Alert>L'import a échoué : {job.message}</Alert>}
       {error && <Alert>{error}</Alert>}
-      {data.districts.length > 0 && (
-        <Alert kind="warning">
-          L'import remplace les {data.districts.length.toLocaleString("fr")} zones actuelles. Les tournées passées gardent leurs résultats.
+      {socialReport && (
+        <Alert kind="success">
+          Indicateur social importé sur {socialReport.n_with_social.toLocaleString("fr")} des{" "}
+          {socialReport.n_districts.toLocaleString("fr")} zones. Les scores sont recalculés.
         </Alert>
       )}
-      {data.districts.length === 0 && !job && <EmptyState icon={LandPlot} title="Pas encore de zones" />}
+      {!hasZones && !job && <EmptyState icon={LandPlot} title="Pas encore de zones" />}
+
+      {/* Social indicator: one format for every city, a GeoJSON with `bureau_vote` and `minima_sociaux_pct`. */}
+      <input
+        ref={socialInput}
+        type="file"
+        accept=".geojson,.json,application/geo+json,application/json"
+        className="hidden"
+        onChange={(e) => {
+          const selected = e.target.files?.[0];
+          if (selected) uploadSocial(selected);
+          e.target.value = "";
+        }}
+      />
+      <Card className="flex items-center gap-3 p-3.5 ring-0!">
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand-50">
+          <HandCoins className="size-5 text-brand-700" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block font-semibold tracking-tight">Indicateur social</span>
+          {social && (
+            <span className="block text-xs text-zinc-500">
+              {social.n_values.toLocaleString("fr")} bureaux{social.date ? ` · ${social.date}` : ""}
+            </span>
+          )}
+        </span>
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={Upload}
+          loading={busy === "social"}
+          disabled={busy !== null || !hasZones}
+          onClick={() => socialInput.current?.click()}
+        >
+          Importer JSON
+        </Button>
+      </Card>
 
       {mine.length > 0 && (
         <>
@@ -713,7 +751,50 @@ function ImportSheet({
       )}
       <SectionTitle>{mine.length > 0 ? "Autres villes" : "Packs des villes"}</SectionTitle>
       {others.map(packButton)}
-
+      {hasZones && (
+        <p className="text-xs text-zinc-500">
+          Un pack remplace les {data.districts.length.toLocaleString("fr")} zones actuelles. Les tournées passées gardent leurs
+          résultats, et l'indicateur social importé est conservé.
+        </p>
+      )}
     </Sheet>
+  );
+}
+
+function ImportRow({
+  icon,
+  title,
+  meta,
+  description,
+  onClick,
+  disabled,
+  highlighted = false,
+}: {
+  icon: ReactNode;
+  title: string;
+  meta?: string;
+  description?: string;
+  onClick: () => void;
+  disabled?: boolean;
+  highlighted?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`flex w-full items-center gap-3 rounded-2xl bg-white p-3.5 text-left ring-1 active:bg-zinc-50 disabled:opacity-60 ${
+        highlighted ? "ring-2 ring-brand-500" : "ring-zinc-950/[0.08]"
+      }`}
+    >
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-lg">{icon}</span>
+      <span className="min-w-0 flex-1">
+        <span className="flex flex-wrap items-baseline gap-x-2">
+          <span className="font-semibold tracking-tight">{title}</span>
+          {meta && <span className="text-xs text-zinc-500">{meta}</span>}
+        </span>
+        {description && <span className="block text-xs text-zinc-500">{description}</span>}
+      </span>
+      <ChevronRight className="size-5 shrink-0 text-zinc-300" />
+    </button>
   );
 }

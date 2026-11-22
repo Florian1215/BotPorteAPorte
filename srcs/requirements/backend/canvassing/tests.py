@@ -882,3 +882,66 @@ class LeaderboardElectionTests(TestCase):
         orgs = client.get("/api/stats/leaderboard/", {"scope": "organizations"}).json()
         self.assertEqual(next(r["doors"] for r in orgs["rows"] if r["id"] == organization.id), 1)
 
+
+
+class SocialIndicatorUploadTests(TestCase):
+    def setUp(self):
+        from django.contrib.gis.geos import Point
+
+        from accounts.models import Role, User
+
+        self.organization = Organization.objects.create(code="o", name="O")
+        self.manager = User.objects.create_user(email="r@demo.test", organization=self.organization, role=Role.MANAGER, is_approved=True)
+        for code, x in (("01/001", 0), ("01/002", 1), ("99", 2)):
+            square = Polygon.from_bbox((x, 0, x + 1, 1))
+            square.srid = 4326
+            District.objects.create(
+                organization=self.organization, code=code, name=code, geometry=MultiPolygon(square, srid=4326),
+                label_point=Point(x + 0.5, 0.5, srid=4326),
+            )
+
+    def feature(self, code, value, x):
+        return {
+            "type": "Feature",
+            "properties": {"bureau_vote": code, "minima_sociaux_pct": value, "indicateur": "SGB II", "date_donnees": "2025"},
+            "geometry": {"type": "Polygon", "coordinates": [[[x, 0], [x + 1, 0], [x + 1, 1], [x, 1], [x, 0]]]},
+        }
+
+    def upload(self, features):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.test import Client
+
+        client = Client()
+        client.force_login(self.manager)
+        data = json.dumps({"type": "FeatureCollection", "features": features}).encode()
+        return client.post("/api/manage/districts/social/", {"file": SimpleUploadedFile("ville.geojson", data)})
+
+    def test_values_by_number_then_by_outline(self):
+        # "01001" is district "01/001"; "X" matches no number but its outline contains district "99".
+        response = self.upload([self.feature("01001", 12.5, 0), self.feature("01002", 3, 1), self.feature("X", 7, 2)])
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["n_with_social"], 3)
+        values = dict(District.objects.filter(organization=self.organization).values_list("code", "social_value"))
+        self.assertEqual(values, {"01/001": 12.5, "01/002": 3, "99": 7})
+        self.organization.refresh_from_db()
+        self.assertEqual(self.organization.social_label, "Minima sociaux (% des habitants)")
+
+        # Re-importing the pack recreates the districts: the uploaded values are applied again.
+        from .services import social
+
+        District.objects.filter(organization=self.organization).update(social_value=None)
+        self.organization.social_label = "Loyer net moyen (Zensus 2022)"
+        self.organization.save()
+        self.assertEqual(social.apply_saved(self.organization), 3)
+        self.organization.refresh_from_db()
+        self.assertEqual(self.organization.social_label, "Minima sociaux (% des habitants)")
+
+    def test_file_of_another_city_is_refused(self):
+        response = self.upload([self.feature("01001", 12.5, 50), self.feature("01002", 3, 51)])
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("pas le fichier de ta ville", response.json()["detail"])
+
+    def test_missing_columns(self):
+        response = self.upload([{"type": "Feature", "properties": {"x": 1}, "geometry": None}])
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("minima_sociaux_pct", response.json()["detail"])

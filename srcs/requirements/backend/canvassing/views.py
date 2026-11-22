@@ -7,6 +7,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -30,6 +31,7 @@ from .services import packs
 from .services import districts as district_service
 from .services import elections as election_service
 from .services import scoring
+from .services import social as social_service
 from .services.scope import organization_addresses
 from .services import tours as tour_service
 from .services.geo import bbox_around
@@ -38,6 +40,7 @@ NEARBY_LIMIT = 3000
 TOP_AREAS = 10
 AREAS_RADII_KM = (1, 3, 5, 10)  # "Tournée préparée": best zones around the militant, radius picked in the app
 AREAS_DEFAULT_RADIUS_KM = 3
+SOCIAL_MAX_BYTES = 20 * 1024 * 1024  # nginx's limit
 
 
 def error(message: str, status_code: int = status.HTTP_400_BAD_REQUEST, **extra) -> Response:
@@ -260,6 +263,7 @@ class ManageDistrictListView(DistrictManagerView):
                 "criteria": [{"key": c.key, "label": c.label} for c in scoring.criteria_for(organization)],
                 **reference_party_to_dict(organization),
                 "import": import_to_dict(last_import(organization)),
+                "social_upload": social_service.upload_to_dict(organization),
                 "packs": packs.catalog(organization),
                 **progress_election(election),
             }
@@ -383,6 +387,27 @@ class DistrictImportView(DistrictManagerView):
         if running and running.status == DistrictImport.ImportStatus.RUNNING:
             raise tour_service.TourError("Un import est déjà en cours.", status.HTTP_409_CONFLICT)
         return DistrictImport.objects.create(organization=self.organization, user=self.request.user, source=source)
+
+
+class SocialIndicatorView(DistrictManagerView):
+    """POST a social indicator file (GeoJSON, one format for every city: see `services/social.py`)."""
+
+    parser_classes = [MultiPartParser]
+
+    def post(self, request):
+        upload = request.FILES.get("file")
+        if upload is None:
+            return error("Choisis le fichier de l'indicateur social (.geojson).")
+        if upload.size > SOCIAL_MAX_BYTES:
+            return error("Le fichier ne doit pas dépasser 20 Mo.")
+        running = last_import(self.organization)
+        if running and running.status == DistrictImport.ImportStatus.RUNNING:
+            return error("Un import des zones est en cours : réessaie quand il est terminé.", status.HTTP_409_CONFLICT)
+        try:
+            report = social_service.import_file(self.organization, upload.read(), upload.name)
+        except social_service.SocialFileError as exc:
+            return error(str(exc))
+        return Response(report)
 
 
 class ScoreWeightsView(DistrictManagerView):

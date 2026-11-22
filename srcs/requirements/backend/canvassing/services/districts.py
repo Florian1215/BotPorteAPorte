@@ -533,7 +533,7 @@ def start_import(job: DistrictImport) -> None:
 
 
 def _run(job_id: int) -> None:
-    from . import packs
+    from . import packs, social
 
     close_old_connections()
     job = DistrictImport.objects.select_related("organization").get(pk=job_id)
@@ -542,7 +542,10 @@ def _run(job_id: int) -> None:
         report = result.report
         report.update(save_districts(job.organization, result.rows, result.election, result.settings))
         organization = job.organization
-        if result.social_from_rent:
+        n_uploaded = social.apply_saved(organization)
+        if n_uploaded is not None:  # the social indicator uploaded by the responsables wins
+            report["n_with_social"] = n_uploaded
+        elif result.social_from_rent:
             report["n_with_social"] = packs.social_from_rent(organization)
             scoring.rescore_organization(organization)
         elif not report.get("n_with_social"):

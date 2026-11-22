@@ -12,10 +12,14 @@ def forwards(apps, schema_editor):
             organization.score_weights = weights
             organization.save(update_fields=["score_weights"])
     # Scores with the new criterion (the current code, once: districts are re-scored at every import anyway).
+    # Only when there are districts: the current model may have columns a fresh database does not have yet.
+    ids = list(Organization.objects.filter(districts__isnull=False).distinct().values_list("id", flat=True))
+    if not ids:
+        return
     from accounts.models import Organization as CurrentOrganization
     from canvassing.services import scoring
 
-    for organization in CurrentOrganization.objects.filter(districts__isnull=False).distinct():
+    for organization in CurrentOrganization.objects.filter(id__in=ids):
         scoring.rescore_organization(organization)
 
 

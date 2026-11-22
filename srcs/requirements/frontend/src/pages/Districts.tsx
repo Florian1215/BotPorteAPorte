@@ -416,10 +416,6 @@ function OverviewSheet({
 
 // --------------------------------------------------------------------------- district details
 
-function formatPct(v: number | null | undefined, digits = 1) {
-  return v == null ? "—" : `${v.toLocaleString("fr", { maximumFractionDigits: digits })} %`;
-}
-
 function DistrictSheet({ id }: { id: number }) {
   const navigate = useNavigate();
   const [detail, setDetail] = useState<DistrictDetail | null>(null);
@@ -442,7 +438,6 @@ function DistrictSheet({ id }: { id: number }) {
 
   const d = detail;
   const p = d.progress;
-  const totalWeight = d.score_parts.reduce((sum, part) => sum + (part.rank != null ? part.weight : 0), 0);
 
   return (
     <Sheet
@@ -462,10 +457,10 @@ function DistrictSheet({ id }: { id: number }) {
       <div className="flex items-center gap-3">
         <ScoreBadge score={d.score} large />
         <div className="min-w-0 flex-1">
-          <p className="font-semibold tracking-tight">Score {Math.round(d.score)} / 100</p>
+          <p className="font-semibold tracking-tight">Score {Math.round(d.score)}</p>
           <p className="text-sm text-zinc-500 tabular-nums">
             {p.total > 0
-              ? `${p.total.toLocaleString("fr")} Français·e${p.total > 1 ? "s" : ""} · ${formatPct(p.done_pct, 0)} fait`
+              ? `${p.done.toLocaleString("fr")}/${p.total.toLocaleString("fr")} Français·e${p.total > 1 ? "s" : ""}`
               : "Aucun Français de la liste ici"}
           </p>
         </div>
@@ -474,11 +469,11 @@ function DistrictSheet({ id }: { id: number }) {
       {p.total > 0 && <AgePyramid ages={d.ages} />}
 
       <SectionTitle>Détail du score</SectionTitle>
-      <Card className="divide-y divide-zinc-950/[0.06]">
+      <div>
         {d.score_parts.map((part) => {
           const counts = part.rank != null && part.weight > 0;
           return (
-            <div key={part.key} className={`px-3.5 py-2.5 ${counts ? "" : "opacity-60"}`} title={CRITERION_HELP[part.key]}>
+            <div key={part.key} className={`py-2.5 ${counts ? "" : "opacity-60"}`} title={CRITERION_HELP[part.key]}>
               <div className="flex items-baseline justify-between gap-2">
                 <p className="text-sm font-semibold">{part.label}</p>
                 <p className="text-sm tabular-nums text-zinc-700">
@@ -490,17 +485,11 @@ function DistrictSheet({ id }: { id: number }) {
                   <div className="h-full rounded-full bg-brand-600" style={{ width: `${Math.max(2, part.rank * 100)}%` }} />
                 )}
               </div>
-              <p className="mt-1 text-[11px] text-zinc-500 tabular-nums">
-                {part.rank == null
-                  ? "Pas de donnée"
-                  : `Mieux que ${Math.round(part.rank * 100)} % des zones${
-                      counts ? ` · ${Math.round((100 * part.weight) / totalWeight)} % du score` : ""
-                    }`}
-              </p>
+              {part.rank == null && <p className="mt-1 text-[11px] text-zinc-500">Pas de donnée</p>}
             </div>
           );
         })}
-      </Card>
+      </div>
 
     </Sheet>
   );

@@ -922,7 +922,7 @@ class SocialIndicatorUploadTests(TestCase):
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(response.json()["n_with_social"], 3)
         values = dict(District.objects.filter(organization=self.organization).values_list("code", "social_value"))
-        self.assertEqual(values, {"01/001": 12.5, "01/002": 3, "99": 7})
+        self.assertEqual(values, {"01/001": 0.125, "01/002": 0.03, "99": 0.07})
         self.organization.refresh_from_db()
         self.assertEqual(self.organization.social_label, "Minima sociaux (% des habitants)")
 

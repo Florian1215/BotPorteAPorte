@@ -153,7 +153,8 @@ def import_file(organization, data: bytes, filename: str) -> dict:
         "indicator": social.indicator[:1000],
         "date": social.date[:64],
         "uploaded_at": timezone.now().isoformat(),
-        "values": {codes[pk]: value for pk, value in values.items()},
+        # Stored as a share (0–1) like the other indicators: the app shows shares as percentages.
+        "values": {codes[pk]: round(value / 100, 6) for pk, value in values.items()},
     }
     organization.save(update_fields=["social_upload"])
     apply_saved(organization)

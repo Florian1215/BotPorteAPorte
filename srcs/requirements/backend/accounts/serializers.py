@@ -1,3 +1,4 @@
+from django.utils import timezone
 from django.utils.text import slugify
 from rest_framework import serializers
 
@@ -111,16 +112,29 @@ class MeSerializer(serializers.ModelSerializer):
             "telegram_id",
             "navigation_app",
             "route_display",
+            "confidentiality_accepted_at",
         ]
-        read_only_fields = ["telegram_id"]
+        read_only_fields = ["telegram_id", "confidentiality_accepted_at"]
 
 
 class ProfileSerializer(serializers.ModelSerializer):
     first_name = serializers.CharField(max_length=150)
+    # Ticked box of the confidentiality agreement: its date is kept as proof.
+    accept_confidentiality = serializers.BooleanField(write_only=True, required=False)
 
     class Meta:
         model = User
-        fields = ["first_name", "last_name", "navigation_app", "route_display"]
+        fields = ["first_name", "last_name", "navigation_app", "route_display", "accept_confidentiality"]
+
+    def validate(self, attrs):
+        accepted = attrs.pop("accept_confidentiality", False)
+        if self.instance.confidentiality_accepted_at is None:
+            if not accepted:
+                raise serializers.ValidationError(
+                    {"accept_confidentiality": "Tu dois accepter l'engagement de confidentialité pour continuer."}
+                )
+            attrs["confidentiality_accepted_at"] = timezone.now()
+        return attrs
 
 
 class MemberSerializer(serializers.ModelSerializer):

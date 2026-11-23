@@ -167,6 +167,10 @@ class User(AbstractUser):
     route_display = models.CharField(
         "tracé des tournées", max_length=16, choices=RouteDisplay.choices, default=RouteDisplay.STREET
     )
+    # Proof of the signed confidentiality agreement (RGPD), asked once with the name at sign-up.
+    confidentiality_accepted_at = models.DateTimeField(
+        "engagement de confidentialité accepté le", null=True, blank=True, editable=False
+    )
 
     USERNAME_FIELD = "email"
     EMAIL_FIELD = "email"
@@ -240,6 +244,7 @@ class User(AbstractUser):
         self.is_active = False
         self.is_approved = False
         self.suspended_at = None
+        self.confidentiality_accepted_at = None
         self.is_staff = False
         self.role = Role.MILITANT
         self.save()

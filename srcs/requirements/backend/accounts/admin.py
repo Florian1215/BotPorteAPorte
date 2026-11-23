@@ -24,13 +24,13 @@ class UserAdmin(admin.ModelAdmin):
     list_filter = ["is_approved", "role", "organization", "is_staff", "is_active"]
     search_fields = ["email", "first_name", "last_name"]
     ordering = ["email"]
-    readonly_fields = ["last_login", "date_joined"]
+    readonly_fields = ["last_login", "date_joined", "confidentiality_accepted_at"]
     filter_horizontal = ["groups", "user_permissions"]
     fieldsets = [
         (None, {"fields": ["email", "first_name", "last_name"]}),
         ("Porte-à-porte", {"fields": ["organization", "role", "is_approved"]}),
         ("Accès", {"fields": ["is_active", "is_staff", "is_superuser", "groups", "user_permissions"]}),
-        ("Dates", {"fields": ["last_login", "date_joined"]}),
+        ("Dates", {"fields": ["last_login", "date_joined", "confidentiality_accepted_at"]}),
     ]
     actions = ["approve"]
 

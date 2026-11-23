@@ -59,6 +59,8 @@ export type User = {
   navigation_app: NavigationApp;
   /** Tour map: walking route along the streets, or straight lines between the doors. */
   route_display: RouteDisplay;
+  /** Date the confidentiality agreement (RGPD) was accepted; null = to be asked before anything else. */
+  confidentiality_accepted_at: string | null;
 };
 
 export type NavigationApp = "google" | "apple";

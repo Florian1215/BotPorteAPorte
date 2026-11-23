@@ -4,7 +4,10 @@ import { api, ApiError } from "../api/client";
 import type { LoginRequestResponse, User } from "../api/types";
 import { LAST_ORGANIZATION_KEY } from "../lib/constants";
 
-type ProfileUpdate = Partial<Pick<User, "first_name" | "last_name" | "navigation_app" | "route_display">>;
+type ProfileUpdate = Partial<Pick<User, "first_name" | "last_name" | "navigation_app" | "route_display">> & {
+  /** Ticked box of the confidentiality agreement (asked once, with the name). */
+  accept_confidentiality?: boolean;
+};
 
 type AuthState = {
   user: User | null;

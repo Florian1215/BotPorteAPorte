@@ -27,7 +27,7 @@ import VoterLists, { VoterListDetail } from "./pages/VoterLists";
 function RequireCanvasser({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
-  if (!user.first_name) return <AskName />;
+  if (!user.first_name || !user.confidentiality_accepted_at) return <AskName />;
   // Site admins get in even without a current organization (to create / pick one).
   if (!user.can_canvass && !user.is_site_admin) return <Pending />;
   return <>{children}</>;

@@ -53,8 +53,6 @@ export type User = {
   can_manage_organization: boolean;
   is_site_admin: boolean;
   organization: Organization | null;
-  /** Telegram account linked from "Mon compte" (visits made with the old bot are then this user's). */
-  telegram_id: number | null;
   /** App opened when tapping an address during a tour. */
   navigation_app: NavigationApp;
   /** Tour map: walking route along the streets, or straight lines between the doors. */

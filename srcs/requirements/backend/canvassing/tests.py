@@ -408,7 +408,7 @@ class ActiveTourTests(TestCase):
         self.assertEqual(response.json()["tour_id"], tour.id)
 
 
-# --------------------------------------------------------------------------- elections & Telegram link
+# --------------------------------------------------------------------------- elections & Telegram id
 
 from canvassing.models import Election, Status, Visit  # noqa: E402
 from canvassing.services import elections as election_service  # noqa: E402
@@ -429,41 +429,37 @@ class ElectionTelegramTests(TestCase):
         # A visit made with the old Telegram bot: only the Telegram id of who made it is known.
         Visit.objects.create(address=self.martin, result="commitment_to_vote", election=self.election, telegram_user_id=123)
 
-    def test_linking_telegram_gives_the_visits(self):
-        import hashlib
-        import hmac
-        import time
+    def test_telegram_id_set_in_admin_gives_the_visits(self):
+        from django.test import Client
 
-        from django.test import Client, override_settings
+        from accounts.models import Role, User
 
-        from accounts.models import User
-
-        token = "4242:secret"
+        admin = User.objects.create_superuser(email="admin@demo.test")
         user = User.objects.create_user(email="t@demo.test", organization=self.berlin, is_approved=True)
         client = Client()
-        client.force_login(user)
+        client.force_login(admin)
 
-        def signed(telegram_id, auth_date=None):
-            data = {"id": telegram_id, "first_name": "Camille", "auth_date": int(auth_date or time.time())}
-            check = "\n".join(f"{k}={data[k]}" for k in sorted(data))
-            data["hash"] = hmac.new(hashlib.sha256(token.encode()).digest(), check.encode(), hashlib.sha256).hexdigest()
-            return data
+        def save(telegram_id):
+            data = {
+                "email": user.email, "first_name": "", "last_name": "", "organization": self.berlin.pk,
+                "role": Role.MILITANT, "is_approved": "on", "telegram_id": telegram_id, "is_active": "on",
+                "last_login_0": "", "last_login_1": "", "date_joined_0": "2026-01-01", "date_joined_1": "00:00:00",
+            }
+            return client.post(f"/admin/accounts/user/{user.pk}/change/", data)
 
-        with override_settings(TELEGRAM_BOT_TOKEN=token):
-            forged = {**signed(123), "id": 124}
-            self.assertEqual(client.post("/api/auth/me/telegram/", forged, content_type="application/json").status_code, 400)
-            old = signed(123, auth_date=time.time() - 2 * 24 * 3600)
-            self.assertEqual(client.post("/api/auth/me/telegram/", old, content_type="application/json").status_code, 400)
+        self.assertEqual(save("123").status_code, 302)
+        self.assertEqual(Visit.objects.get(address=self.martin).user, user)
+        # Another id: the visits of the previous one go back to nobody.
+        self.assertEqual(save("124").status_code, 302)
+        self.assertIsNone(Visit.objects.get(address=self.martin).user)
+        self.assertEqual(save("123").status_code, 302)
+        # Nobody else can take that Telegram id.
+        other = User.objects.create_user(email="o@demo.test", organization=self.berlin, is_approved=True)
+        other.telegram_id = 123
+        from django.core.exceptions import ValidationError
 
-            response = client.post("/api/auth/me/telegram/", signed(123), content_type="application/json")
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual((response.json()["telegram_id"], response.json()["linked_visits"]), (123, 1))
-            self.assertEqual(Visit.objects.get(address=self.martin).user, user)
-            # Once linked, no second link; and nobody else can take that Telegram account.
-            self.assertEqual(client.post("/api/auth/me/telegram/", signed(124), content_type="application/json").status_code, 409)
-            other = User.objects.create_user(email="o@demo.test", organization=self.berlin, is_approved=True)
-            client.force_login(other)
-            self.assertEqual(client.post("/api/auth/me/telegram/", signed(123), content_type="application/json").status_code, 409)
+        with self.assertRaises(ValidationError):
+            other.full_clean()
 
     def test_new_election_starts_over_but_keeps_do_not_contact(self):
         presidential = Election.objects.create(name="Élection présidentielle 2027")

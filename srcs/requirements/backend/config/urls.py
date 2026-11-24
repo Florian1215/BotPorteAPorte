@@ -1,4 +1,3 @@
-from django.conf import settings
 from django.contrib import admin
 from django.http import JsonResponse
 from django.urls import include, path
@@ -14,7 +13,6 @@ def public_config(request):
     return JsonResponse(
         {
             "map": tile_config(),
-            "telegram_bot_id": settings.TELEGRAM_BOT_ID,
         }
     )
 

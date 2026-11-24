@@ -329,7 +329,7 @@ class Visit(models.Model):
     result = models.CharField(max_length=32, choices=VisitResult.choices)
     absent_detail = models.CharField(max_length=32, choices=AbsentDetail.choices, blank=True, default="")
     election = models.ForeignKey(Election, null=True, blank=True, on_delete=models.SET_NULL, related_name="visits")
-    # Visits imported from the Telegram bot: who made it there. Given to the member who links that Telegram account.
+    # Visits imported from the Telegram bot: who made it there. Given to the member whose Telegram id a site admin sets.
     telegram_user_id = models.BigIntegerField(null=True, blank=True, db_index=True)
     # Not auto_now_add: visits imported from the Telegram bot keep their date.
     created_at = models.DateTimeField(default=timezone.now)

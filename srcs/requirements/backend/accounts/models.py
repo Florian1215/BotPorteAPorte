@@ -157,8 +157,15 @@ class User(AbstractUser):
     is_approved = models.BooleanField("compte validé", default=False)
     # Suspended by a responsable (not approved any more, but not a sign-up to validate either).
     suspended_at = models.DateTimeField("suspendu·e le", null=True, blank=True)
-    # Telegram account linked from the settings: the visits made with the old Telegram bot are theirs.
-    telegram_id = models.BigIntegerField("identifiant Telegram", null=True, blank=True, unique=True)
+    # Telegram account used with the old bot, set by a site admin in the Django admin: the visits made with it are
+    # theirs (see `link_telegram_visits`).
+    telegram_id = models.BigIntegerField(
+        "identifiant Telegram",
+        null=True,
+        blank=True,
+        unique=True,
+        help_text="Identifiant numérique du compte Telegram utilisé avec l'ancien bot : ses portes lui sont attribuées.",
+    )
     # App opened when tapping an address during a tour.
     navigation_app = models.CharField(
         "application de navigation", max_length=16, choices=NavigationApp.choices, default=NavigationApp.GOOGLE
@@ -248,6 +255,19 @@ class User(AbstractUser):
         self.is_staff = False
         self.role = Role.MILITANT
         self.save()
+
+    def link_telegram_visits(self, previous_id: int | None = None) -> int:
+        """Give this member the visits made with the old bot under `telegram_id`. Returns how many were given.
+
+        When the id changes, the visits given for `previous_id` go back to nobody (until that id is set on someone).
+        """
+        from canvassing.models import Visit  # avoid an import cycle
+
+        if previous_id is not None and previous_id != self.telegram_id:
+            Visit.objects.filter(user=self, telegram_user_id=previous_id).update(user=None)
+        if self.telegram_id is None:
+            return 0
+        return Visit.objects.filter(user__isnull=True, telegram_user_id=self.telegram_id).update(user=self)
 
     def can_manage_member(self, other: "User") -> bool:
         """Change role / suspend `other` (never oneself, never someone of a higher rank)."""

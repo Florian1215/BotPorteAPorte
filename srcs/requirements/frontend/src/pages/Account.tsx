@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, Link2, Mail, MailCheck, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, Mail, MailCheck, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -26,8 +26,6 @@ export default function Account() {
 
       <SectionTitle>Adresse email</SectionTitle>
       <EmailChange current={user.email} />
-
-      <TelegramLink />
 
       <div className="pt-4">
         <DeleteAccount />
@@ -210,112 +208,6 @@ function EmailChange({ current }: { current: string }) {
 }
 
 /** Erases the personal data; tours and doors knocked stay in the organization's statistics. */
-type TelegramAuthData = Record<string, string | number>;
-
-declare global {
-  interface Window {
-    Telegram?: { Login?: { auth: (options: { bot_id: number; request_access?: boolean }, callback: (data: TelegramAuthData | false) => void) => void } };
-  }
-}
-
-const TELEGRAM_SCRIPT = "https://telegram.org/js/telegram-widget.js?22";
-
-/** Loads Telegram's login script once (ahead of the click, so that its popup is not blocked). */
-function loadTelegramScript(): Promise<void> {
-  if (window.Telegram?.Login) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    let script = document.querySelector<HTMLScriptElement>(`script[src="${TELEGRAM_SCRIPT}"]`);
-    if (!script) {
-      script = document.createElement("script");
-      script.src = TELEGRAM_SCRIPT;
-      script.async = true;
-      document.head.appendChild(script);
-    }
-    script.addEventListener("load", () => resolve());
-    script.addEventListener("error", () => reject(new Error("Impossible de charger Telegram.")));
-  });
-}
-
-/**
- * Link the Telegram account used with the old bot: Telegram's popup confirms the account, the server checks its
- * signature and gives this user the doors knocked with the bot. Once linked, the button is gone.
- */
-function TelegramLink() {
-  const { user, setUser } = useAuth();
-  const [botId, setBotId] = useState<number | null | undefined>(undefined);
-  const [ready, setReady] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [linkedVisits, setLinkedVisits] = useState<number | null>(null);
-  const linked = user?.telegram_id != null;
-
-  useEffect(() => {
-    if (linked) return;
-    api<{ telegram_bot_id: number | null }>("/config/")
-      .then((config) => setBotId(config.telegram_bot_id))
-      .catch(() => setBotId(null));
-  }, [linked]);
-
-  useEffect(() => {
-    if (!botId || linked) return;
-    loadTelegramScript()
-      .then(() => setReady(true))
-      .catch((e) => setError(errorMessage(e)));
-  }, [botId, linked]);
-
-  if (!user || (!linked && !botId)) return null; // not configured on this site
-
-  const start = () => {
-    if (!botId || !window.Telegram?.Login) return;
-    setError(null);
-    setBusy(true);
-    window.Telegram.Login.auth({ bot_id: botId }, async (data) => {
-      if (!data) return setBusy(false); // popup closed
-      try {
-        const me = await api<User & { linked_visits: number }>("/auth/me/telegram/", { method: "POST", body: data });
-        setLinkedVisits(me.linked_visits);
-        setUser(me);
-      } catch (err) {
-        setError(errorMessage(err));
-      } finally {
-        setBusy(false);
-      }
-    });
-  };
-
-  return (
-    <>
-      <SectionTitle>Telegram</SectionTitle>
-      {linked ? (
-        <Card className="flex items-center gap-3 p-3.5">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-600">
-            <Check className="size-[18px]" strokeWidth={3} />
-          </span>
-          <div className="min-w-0">
-            <p className="font-semibold tracking-tight">Compte Telegram lié</p>
-            <p className="text-sm text-zinc-500">
-              {linkedVisits != null
-                ? `${linkedVisits.toLocaleString("fr")} porte${linkedVisits > 1 ? "s" : ""} faite${linkedVisits > 1 ? "s" : ""} avec le bot ajoutée${linkedVisits > 1 ? "s" : ""} à ton historique.`
-                : "Ce que tu as fait avec le bot Telegram est dans ton historique."}
-            </p>
-          </div>
-        </Card>
-      ) : (
-        <Card className="space-y-3 p-3.5">
-          <p className="text-sm text-zinc-600">
-            Tu faisais du porte-à-porte avec le bot Telegram ? Lie ton compte Telegram pour retrouver ces portes dans ton
-            historique et tes statistiques.
-          </p>
-          {error && <Alert>{error}</Alert>}
-          <Button className="w-full" variant="secondary" icon={Link2} loading={busy} disabled={!ready} onClick={start}>
-            Lier mon compte Telegram
-          </Button>
-        </Card>
-      )}
-    </>
-  );
-}
-
 function DeleteAccount() {
   const { logout } = useAuth();
   const navigate = useNavigate();

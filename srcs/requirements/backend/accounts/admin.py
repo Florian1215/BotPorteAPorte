@@ -22,13 +22,13 @@ class UserAdmin(admin.ModelAdmin):
 
     list_display = ["email", "first_name", "last_name", "organization", "role", "is_approved", "is_staff", "last_login"]
     list_filter = ["is_approved", "role", "organization", "is_staff", "is_active"]
-    search_fields = ["email", "first_name", "last_name"]
+    search_fields = ["email", "first_name", "last_name", "telegram_id"]
     ordering = ["email"]
     readonly_fields = ["last_login", "date_joined", "confidentiality_accepted_at"]
     filter_horizontal = ["groups", "user_permissions"]
     fieldsets = [
         (None, {"fields": ["email", "first_name", "last_name"]}),
-        ("Porte-à-porte", {"fields": ["organization", "role", "is_approved"]}),
+        ("Porte-à-porte", {"fields": ["organization", "role", "is_approved", "telegram_id"]}),
         ("Accès", {"fields": ["is_active", "is_staff", "is_superuser", "groups", "user_permissions"]}),
         ("Dates", {"fields": ["last_login", "date_joined", "confidentiality_accepted_at"]}),
     ]
@@ -37,7 +37,12 @@ class UserAdmin(admin.ModelAdmin):
     def save_model(self, request, obj, form, change):
         if not obj.password:
             obj.set_unusable_password()
+        previous_id = form.initial.get("telegram_id") if change else None
         super().save_model(request, obj, form, change)
+        if "telegram_id" in form.changed_data:
+            n = obj.link_telegram_visits(previous_id)
+            if obj.telegram_id is not None:
+                self.message_user(request, f"{n} porte(s) faite(s) avec le bot Telegram attribuée(s) à {obj}.")
 
     @admin.action(description="Valider les comptes sélectionnés")
     def approve(self, request, queryset):

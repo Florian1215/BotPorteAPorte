@@ -109,12 +109,11 @@ class MeSerializer(serializers.ModelSerializer):
             "can_manage_organization",
             "is_site_admin",
             "organization",
-            "telegram_id",
             "navigation_app",
             "route_display",
             "confidentiality_accepted_at",
         ]
-        read_only_fields = ["telegram_id", "confidentiality_accepted_at"]
+        read_only_fields = ["confidentiality_accepted_at"]
 
 
 class ProfileSerializer(serializers.ModelSerializer):

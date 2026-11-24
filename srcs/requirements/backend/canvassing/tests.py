@@ -823,6 +823,30 @@ class SharedVoterListTests(TestCase):
         self.assertTrue(response.json()["logo_url"])
         self.assertEqual(Organization.objects.get(code="dresde").logo_content_type, "image/webp")
 
+    def test_manager_changes_and_removes_the_logo(self):
+        import io
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from PIL import Image
+        from rest_framework.test import APIClient
+
+        def png():
+            buffer = io.BytesIO()
+            Image.new("RGB", (40, 40), "blue").save(buffer, "PNG")
+            return SimpleUploadedFile("logo.png", buffer.getvalue(), content_type="image/png")
+
+        code = self.manager.organization.code
+        client = APIClient()
+        client.force_authenticate(self.manager)
+        response = client.put(f"/api/manage/organizations/{code}/logo/", {"logo": png()}, format="multipart")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(response.json()["logo_url"])
+        self.assertEqual(client.delete(f"/api/manage/organizations/{code}/logo/").json()["logo_url"], None)
+
+        other = Organization.objects.exclude(pk=self.manager.organization_id).first()
+        response = client.put(f"/api/manage/organizations/{other.code}/logo/", {"logo": png()}, format="multipart")
+        self.assertEqual(response.status_code, 403)
+
     def test_only_site_admins_manage_voter_lists(self):
         from rest_framework.test import APIClient
 

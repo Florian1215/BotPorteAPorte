@@ -1,5 +1,5 @@
-import { ArrowRightLeft, ChevronRight, FileSpreadsheet, MapPin, Users } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ArrowRightLeft, ChevronRight, FileSpreadsheet, ImagePlus, MapPin, Trash2, Users } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 
 import { api, errorMessage } from "../api/client";
@@ -8,15 +8,16 @@ import { OrgLogo } from "../components/organization";
 import { Alert, Button, Card, IconTile, Loading, SectionTitle, Sheet } from "../components/ui";
 import { useAuth } from "../context/AuthContext";
 
-/** An organization: link to its members. Name, city, LEC and logo are fixed at creation and only shown here. */
+/** An organization: link to its members, its logo (changeable). Name, city and LEC are fixed at creation and only shown here. */
 export default function OrganizationSettings() {
-  const { user, setUser } = useAuth();
+  const { user, setUser, refresh } = useAuth();
   const params = useParams();
   const code = params.code ?? user?.organization?.code;
   const [organization, setOrganization] = useState<OrganizationAdmin | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!code) return;
@@ -29,6 +30,29 @@ export default function OrganizationSettings() {
   if (!code) return <Navigate to="/organizations" replace />;
 
   const isCurrent = user?.organization?.code === code;
+  const canEditLogo = Boolean(user?.is_site_admin || (user?.can_manage_organization && isCurrent));
+
+  const saveLogo = async (file: File | null) => {
+    if (file && file.size > 20 * 1024 * 1024) return setError("Image trop lourde (20 Mo maximum).");
+    setBusy(file ? "logo" : "logo-remove");
+    setError(null);
+    setSaved(null);
+    try {
+      let body: FormData | undefined;
+      if (file) {
+        body = new FormData();
+        body.append("logo", file);
+      }
+      const updated = await api<OrganizationAdmin>(`/manage/organizations/${code}/logo/`, { method: file ? "PUT" : "DELETE", body });
+      setOrganization((current) => (current ? { ...current, logo_url: updated.logo_url } : updated));
+      setSaved(file ? "Logo mis à jour." : "Logo retiré.");
+      if (isCurrent) await refresh(); // header logo
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const enter = async () => {
     setBusy("enter");
@@ -72,6 +96,34 @@ export default function OrganizationSettings() {
             </div>
             <ChevronRight className="size-5 text-zinc-300" />
           </Link>
+
+          {canEditLogo && (
+            <>
+              <SectionTitle>Logo</SectionTitle>
+              <Card className="flex items-center gap-3 p-3.5">
+                <OrgLogo organization={organization} className="size-14 text-xl" />
+                <input
+                  ref={fileInput}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) saveLogo(file);
+                    e.target.value = "";
+                  }}
+                />
+                <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
+                  <Button variant="secondary" size="sm" icon={ImagePlus} loading={busy === "logo"} onClick={() => fileInput.current?.click()}>
+                    {organization.logo_url ? "Changer" : "Ajouter un logo"}
+                  </Button>
+                  {organization.logo_url && (
+                    <Button variant="ghost" size="sm" icon={Trash2} loading={busy === "logo-remove"} onClick={() => saveLogo(null)} aria-label="Retirer le logo" />
+                  )}
+                </div>
+              </Card>
+            </>
+          )}
 
           <SectionTitle>Informations</SectionTitle>
           <Card className="divide-y divide-zinc-950/5">

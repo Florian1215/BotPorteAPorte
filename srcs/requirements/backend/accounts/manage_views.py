@@ -224,7 +224,7 @@ def processed_logo(upload) -> bytes:
 
 
 class OrganizationAdminListView(APIView):
-    """Organizations are created once, all at once (name, city, LEC, optional logo), and never edited afterwards."""
+    """Organizations are created once, all at once (name, city, LEC, optional logo); only the logo changes afterwards."""
 
     permission_classes = [IsSiteAdmin]
     parser_classes = [JSONParser, MultiPartParser]
@@ -245,6 +245,31 @@ class OrganizationAdminListView(APIView):
 class OrganizationAdminDetailView(APIView):
     def get(self, request, code):
         return Response(OrganizationAdminSerializer(managed_organization(request, code)).data)
+
+
+class OrganizationLogoUpdateView(APIView):
+    """The organization's responsable (or a site admin) replaces or removes its logo."""
+
+    parser_classes = [MultiPartParser]
+
+    def put(self, request, code):
+        organization = managed_organization(request, code)
+        upload = request.FILES.get("logo")
+        if upload is None:
+            raise ValidationError({"logo": "Choisis une image."})
+        organization.logo = processed_logo(upload)
+        organization.logo_content_type = "image/webp"
+        organization.logo_updated_at = timezone.now()
+        organization.save(update_fields=["logo", "logo_content_type", "logo_updated_at"])
+        return Response(OrganizationAdminSerializer(organization).data)
+
+    def delete(self, request, code):
+        organization = managed_organization(request, code)
+        organization.logo = None
+        organization.logo_content_type = ""
+        organization.logo_updated_at = None
+        organization.save(update_fields=["logo", "logo_content_type", "logo_updated_at"])
+        return Response(OrganizationAdminSerializer(organization).data)
 
 
 # --------------------------------------------------------------------------- voter lists (LEC, site admins)

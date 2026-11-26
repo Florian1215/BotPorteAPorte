@@ -142,6 +142,8 @@ ARCGIS_API_KEY = env("ARCGIS_API_KEY")
 CANVASSING_MAX_STOPS = int(env("CANVASSING_MAX_STOPS", "250"))
 CANVASSING_TOUR_TIMEOUT_HOURS = int(env("CANVASSING_TOUR_TIMEOUT_HOURS", "24"))
 CANVASSING_DRAFT_TIMEOUT_HOURS = 2
+# Every day at this local time (HH:MM, TIME_ZONE), the `scheduler` service closes all tours still open.
+CANVASSING_TOURS_CLOSE_TIME = env("CANVASSING_TOURS_CLOSE_TIME", "06:00")
 
 # --- Passwordless login (one-time code + link sent by email) ---
 LOGIN_CODE_TTL_MINUTES = int(env("LOGIN_CODE_TTL_MINUTES", "15"))

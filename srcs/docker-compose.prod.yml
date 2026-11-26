@@ -38,6 +38,20 @@ services:
         condition: service_healthy
     networks: [backend, frontend]
 
+  # Daily jobs (06:00: closing of the tours still open). Same image; migrations are left to `backend`.
+  scheduler:
+    image: canvassing-backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DJANGO_DEBUG: "0"
+      DATABASE_HOST: db
+    entrypoint: ["python", "manage.py"]
+    command: ["run_scheduler"]
+    depends_on:
+      - backend
+    networks: [backend]
+
   frontend:
     build:
       context: requirements/frontend

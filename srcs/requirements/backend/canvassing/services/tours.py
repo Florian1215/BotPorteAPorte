@@ -77,6 +77,21 @@ def expire_stale_tours() -> None:
             discard_tour(tour)
 
 
+def close_open_tours() -> dict:
+    """Nightly sweep (see the `close_open_tours` command): every tour still open is closed, whatever its age.
+    Previews are dropped; an active tour is finished if a door was knocked, discarded otherwise."""
+    drafts, _ = Tour.objects.filter(status=Tour.TourStatus.DRAFT).delete()
+    finished = discarded = 0
+    for tour in Tour.objects.filter(status=Tour.TourStatus.ACTIVE):
+        if tour.stops.exclude(result="").exists():
+            finish_tour(tour)
+            finished += 1
+        else:
+            discard_tour(tour)
+            discarded += 1
+    return {"finished": finished, "discarded": discarded, "drafts_deleted": drafts}
+
+
 def current_tour(user) -> Tour | None:
     return (
         Tour.objects.filter(user=user, status__in=[Tour.TourStatus.ACTIVE, Tour.TourStatus.DRAFT])
